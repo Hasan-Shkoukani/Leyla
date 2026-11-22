@@ -1,0 +1,271 @@
+"""Fast path: the messages that need no thinking are answered by code in well under a second (no model call). Everything else returns None and goes to the model.
+English and Turkish only (the shop's two languages); any other language never matches and goes to the model. Facts come from the same data the model uses."""
+import random, re
+
+import core
+from build_graph import fold
+
+TR_CH = re.compile(r"[çğıöşüÇĞİÖŞÜ]")  # no re.I here: it would make i match ı/İ
+TR_RE = re.compile(r"\b(merhaba|selam\w*|teşekkür\w*|tesekkur\w*|günaydın|nerede\w*|adres\w*|konum\w*|harita|telefon\w*|iletişim|çalışma|saat\w*|açık|kapalı|fiyat\w*|fotoğraf\w*|sağ|var|mı|mi|mu|mü|nedir|kaç\w*|göster\w*|resim|lütfen|iyi|slm|mrb|tşk|eyvallah)\b", re.I)
+PUNCT = r"[ !.,?🌸💐🙏❤️😊]*"
+THANKS = re.compile(r"^((ok(ay)?|great|perfect|cool|tamam|süper|harika|tamamdır)[ ,.!]+)?(thanks?( you)?( so much| a lot)?|thank u|thx|ty|teşekkür(ler| ederim)?|tesekkur(ler)?( ederim)?|çok teşekkürler|sağ ol|sag ol|eyvallah|tşk)" + PUNCT + "$", re.I)
+GREET = re.compile(r"^(hi+|hello+|hey+|hiya|good (morning|afternoon|evening)|merhaba|selam(lar)?|günaydın|gunaydin|iyi (akşamlar|günler|aksamlar|gunler)|mrb|slm)" + PUNCT + "$", re.I)
+HOURS = re.compile(r"\b(opening|closing|working|business) hours?\b|\bwhat time\b.*\b(open|close)|\bare you open\b|\bwhen (do|are) you (open|close)|çalışma saat|açılış|kapanış|saat kaçta|kaçta (açıl|kapan)|açık mı|kaça kadar|kacta (acil|kapan)|calisma saat", re.I)
+MINE = re.compile(r"\b(same|this|that|these|my|mine|his|her|their|our|new|another|other|different|deliver\w*|send it|send her|send him|here|there|aynı|bu|şu|benim|onun|teslim\w*|buraya|oraya|yeni)\b|\[shared location\]", re.I)  # "same location", "my address", "deliver to this location": the CUSTOMER's place, not a question about the shop
+WHERE = re.compile(r"\bwhere (are|is)\b.*\b(you|shop|store)\b|\b(your )?(address|location|directions)\b|\bgoogle maps?\b|\b(send|share).*\bmap\b|\bwhere.*located\b|nerede|neredesiniz|adres|konum|harita|yol tarif", re.I)
+PHONE = re.compile(r"\b(your|shop'?s?) (phone|number|contact|email|e-mail)\b|\b(the )?(shop|store|company|flower ?shop)('?s)? (phone|number)\b|\bcontact (info|details)\b|\bhow (can|do) i (call|contact|reach)\b|telefon numara|iletişim|sizi nasıl ara|numaranız", re.I)
+OTHER = re.compile(r"\b(my|mine|me|want|need|tomorrow|today|tonight|use|yarın|yarin|bugün|bugun|istiyorum|benim)\b|order|sipari|bouquet|buket|flower|çiçek|cicek|rose|gül|gul\b|price|fiyat|deliver|teslim|photo|fotoğraf|pay|ödeme|odeme|cancel|iptal|chocolate|çikolata|teddy|ayı|gift|hediye|birthday|doğum|how much|kaç (tl|lira|para)|cheap|ucuz|expensive|pahal", re.I)
+SHOW = re.compile(r"\b(photo|picture|pic|image|show|see|fotoğraf\w*|resim\w*|göster\w*)\b", re.I)
+ASK = re.compile(r"\b(price|cost|how much|do you have|have you got|fiyat\w*|kaç|var mı|nedir|ne kadar)\b", re.I)
+
+GREETS = [("Hi, lovely to meet you! I'm Leyla 🌸 Fresh flowers, same-day delivery and free shipping across North Cyprus. What's the occasion, or who are the flowers for? 💐",
+           "Merhaba, tanıştığımıza çok sevindim! Ben Leyla 🌸 Taze çiçekler, aynı gün teslimat ve Kuzey Kıbrıs'ın her yerine ücretsiz gönderim. Hangi vesileyle, çiçekler kimin için? 💐"),
+          ("Hello and welcome! 🌸 Leyla here: fresh flowers, same-day delivery, free shipping all over North Cyprus. Who are we making smile today? 💐",
+           "Merhaba, hoş geldiniz! 🌸 Ben Leyla: taze çiçekler, aynı gün teslimat, tüm Kuzey Kıbrıs'a ücretsiz gönderim. Bugün kimi mutlu ediyoruz? 💐")]
+AGAIN = [("Hi again 🌸 How can I help with your flowers?", "Tekrar merhaba 🌸 Çiçeklerinizle ilgili nasıl yardımcı olabilirim?")]
+WELCOME = [("You're very welcome! 🌸 I'm here whenever you need flowers.", "Rica ederim! 🌸 Çiçek lazım olduğunda buradayım."),
+           ("My pleasure 💐 Just message me anytime!", "Ne demek, benim için zevkti 💐 İstediğiniz zaman yazın!")]
+
+
+CYR = re.compile(r"[\u0400-\u04FF]")
+
+
+def _tr(text):
+    return 1 if TR_CH.search(text) or TR_RE.search(text) else 0
+
+
+def _hours(b, tr):
+    h = b.get("hours") or ""
+    m = re.search(r"\d\d:\d\d\s*[-–]\s*\d\d:\d\d", h)
+    if not m:
+        return None
+    rng = re.sub(r"\s*[-–]\s*", " - ", m.group(0))
+    every = bool(re.search(r"every day|monday to sunday|mon-sun", h, re.I))
+    if tr:
+        return f"Her gün {rng} saatleri arasında açığız 🌸" if every else f"Çalışma saatlerimiz: {rng} 🌸"
+    return f"We're open every day, {rng} 🌸" if every else f"Our opening hours: {h} 🌸"
+
+
+def _where(b, tr):
+    if not b.get("address"):
+        return None
+    line = f"{b['address']} 🌸" if not tr else f"Adresimiz: {b['address']} 🌸"
+    return line + (f"\n\n{b['maps_url']}" if b.get("maps_url") else "")
+
+
+def _phone(b, tr):
+    if not b.get("phone"):
+        return None
+    return (f"You can call or WhatsApp us on {b['phone']}" + (f", or email {b['email']}" if b.get("email") else "") + " 🌸") if not tr else \
+           (f"Bizi {b['phone']} numarasından arayabilir veya WhatsApp'tan yazabilirsiniz" + (f", e-posta: {b['email']}" if b.get("email") else "") + " 🌸")
+
+
+def _product(phone, text):
+    """'show me a photo of <exact product name>' / 'price of <exact name>': the catalog item whose full name is in the message."""
+    t = re.sub(r"[^\w ]", " ", fold(text))
+    t = " " + re.sub(r"\s+", " ", t) + " "
+    best = None
+    for n in core.graph()[0].values():
+        if n["type"] != "product" or n.get("available") is False:
+            continue
+        for nm in {n["name"], n.get("name_en"), n.get("name_tr"), *(n.get("aliases") or [])}:
+            f = re.sub(r"\s+", " ", re.sub(r"[^\w ]", " ", fold(nm or ""))).strip()
+            specific = len(f.split()) >= 3 or bool(re.search(r"\d", f))  # "papatya buketi" is a kind of item, not one product: it goes to the agent, which shows the options
+            if len(f) >= 8 and specific and f" {f} " in t and (best is None or len(f) > best[0]):
+                best = (len(f), n, nm)
+    return best[1:] if best else None
+
+
+def answer(phone, text):
+    """-> ("text", str) | ("photo", product, caption, short line) | None (give it to the model)."""
+    text = text.strip()
+    if text and len(text) <= 100 and "\n" not in text and TODAY_DELIVER.search(text) and not text.startswith("["):  # "can you deliver today / right now?": a direct answer from the shop's clock, no model
+        mine = [r for r in core.orders() if r["customer_number"] == phone and r["status"] not in ("rejected", "cancelled")]
+        key = core.detect_area(text) or ((core.detect_area(mine[-1]["address"]) or mine[-1]["delivery_area"]) if mine else None)
+        return ("text", core.today_answer(2 if CYR.search(text) else 1 if _tr(text) else 0, key or None, mine[-1] if mine else None))
+    if not text or len(text) > 100 or "\n" in text or text.startswith("[") or CYR.search(text):  # Russian is answered by the model, in Russian (the canned replies are English / Turkish)
+        return None
+    tr = _tr(text)
+    busy = any(r["customer_number"] == phone and r["status"] in core.OPEN + core.LOCKED for r in core.orders())
+    if THANKS.match(text) and not busy:
+        return ("text", random.choice(WELCOME)[tr])
+    if GREET.match(text):
+        if busy:  # an order is open: a plain hello is still answered at once by code, with a nudge to the order
+            return ("text", ("Hi again 🌸 I'm here, how can I help with your order?", "Tekrar merhaba 🌸 Buradayım, siparişinizle ilgili nasıl yardımcı olabilirim?")[tr])
+        return ("text", (random.choice(AGAIN) if core.history(phone) else random.choice(GREETS))[tr])
+    if not OTHER.search(text):  # shop facts: one or several in the same message; anything else in it goes to the model
+        b = core.business_info()
+        parts = [f(b, tr) for rx, f in ((HOURS, _hours), (WHERE, _where), (PHONE, _phone)) if rx.search(text) and not (rx is WHERE and MINE.search(text))]
+        if parts and all(parts):
+            return ("text", "\n\n".join(parts))
+    if not busy and (SHOW.search(text) or ASK.search(text)) and not any(rx.search(text) for _, rx in CURRENCY_WORDS):  # "...in euros?" needs the conversion: the model answers that, not this lira-only shortcut
+        found = _product(phone, text)
+        if found:
+            p, nm = found
+            tr = _tr(re.sub(re.escape(nm), " ", text, flags=re.I))  # the product's own name must not decide the language
+            e = core.live_prices([p], show=True).get(p["id"])
+            if e and e.get("in_stock") is not False:
+                name = core.display(p, "tr" if tr else "en")
+                cap = f"{name} - {core.fmt_tl(e['price'])}\n{p.get('url') or ''}".strip()
+                if SHOW.search(text):
+                    return ("photo", p, cap, "Buyurun 🌸 Beğendiniz mi, sipariş verelim mi?" if tr else "Here it is 🌸 Shall I put it together for you?")
+                return ("text", cap + ("\n\nSipariş verelim mi? 🌸" if tr else "\n\nShall I put it together for you? 🌸"))
+    return None
+
+
+SEARCH = re.compile(r"\b(rose|roses|orchid|orchids|daisy|daisies|tulip|lily|lilies|sunflower|bouquet|bouquets|flowers?|plants?|chocolates?|teddy|bear|cake|gifts?|gül|gul|orkide|papatya|lale|buket|çiçek|cicek|çikolata|cikolata|ayıcık|ayicik|pasta|hediye|bitki)\b", re.I)
+NOT_SIMPLE = re.compile(r"\d|under|below|over|above|between|cheap|expensive|budget|altında|altinda|üstünde|arasında|ucuz|pahal|bütçe|butce|order|sipari|take|alıyorum|alayım|istiyorum|i want|i'd like", re.I)
+
+
+COLLECTIONS = (  # the shop's own collections, asked for in plain words (en / tr / ru); the first that matches wins
+    ("promotional", re.compile(r"\b(discounts?|discounted|promotions?|promotional|promo|offers|deals?|on sale|sales?|cheaper|indirim\w*|kampanya\w*|f[ıi]rsat\w*|скидк\w*|акци[яий]\w*|распродаж\w*)\b", re.I)),
+    ("heartfelt", re.compile(r"\b(heartfelt|lovely gift|thoughtful gift|sweet gift|gift from the heart|romantic|kalpten\w*|duygusal\w*|i[çc]ten|romantik|от всего сердца|романтичн\w*|трогательн\w*|милый подарок)\b", re.I)),
+    ("bestSeller", re.compile(r"\b(best[- ]?sellers?|most popular|popular|top sellers?|most ordered|[çc]ok satan\w*|pop[üu]ler\w*|хит\w*|популярн\w*|бестселлер\w*)\b", re.I)),
+    ("new", re.compile(r"\b(new arrivals?|what'?s new|newest|latest|just added|new products?|yeni (?:gelen|[üu]r[üu]n)\w*|yenilik\w*|новинк\w*|новые|новое)\b", re.I)),
+    ("featured", re.compile(r"\b(featured|your favou?rites?|recommend\w*|[öo]ne [çc][ıi]kan\w*|[öo]ner\w*|рекоменд\w*|посоветуйте|посоветуете)\b", re.I)),
+)
+
+
+def collection_for(text):
+    """'do you have any discounts?', 'I need a lovely gift', 'what is popular?': the shop collection this message asks for (promotional, heartfelt, bestSeller, new, featured), else None. A short message only."""
+    t = text.strip()
+    if len(t) > 160 or "\n" in t or t.startswith(("[", "(replying")):
+        return None
+    return next((c for c, rx in COLLECTIONS if rx.search(t)), None)
+
+
+def search_hint(phone, text):
+    """A plain 'do you have orchids?' style question: the catalog hits, so the model can answer in ONE call (it may still search again). None = no hint."""
+    text = text.strip()
+    if len(text) > 100 or "\n" in text or not SEARCH.search(text) or NOT_SIMPLE.search(text):
+        return None
+    if any(r["customer_number"] == phone and r["status"] in core.OPEN + core.LOCKED for r in core.orders()):
+        return None
+    return text
+
+
+BUDGET_MAX = re.compile(r"(?:under|below|less than|max(?:imum)?|up to|within|at most|budget(?:\s+(?:of|is))?|altında|altinda|en fazla)\s*(?:of\s*)?(\d[\d.,]*)\s*(?:tl|try|₺|lira)?", re.I)
+BUDGET_MIN = re.compile(r"(?:over|above|more than|at least|minimum|üstünde|ustunde|en az)\s*(\d[\d.,]*)\s*(?:tl|try|₺|lira)?", re.I)
+CHEAP = re.compile(r"\b(cheapest|least expensive|lowest price|en ucuz)\b", re.I)
+PRICEY = re.compile(r"\b(most expensive|priciest|highest price|en pahalı|en pahali)\b", re.I)
+FILLER = re.compile(r"\b(i|we|want|will|would|like|take|get|buy|order|show|see|look|photos?|pictures?|pics?|images?|me|us|something|anything|do|you|have|any|what|is|are|the|a|an|of|for|my|your|please|can|could|how|much|does|cost|thing|things|one|var|mı|mi|mu|mu\?|hangisi|bana|göster|goster|tl|try|need|sell|too|with|some|there|got|give|find|looking|look|in|and|to|dollars?|usd|euros?|eur|pounds?|gbp)\b", re.I)
+CURRENCY_WORDS = (("USD", re.compile(r"\b(dollars?|usd|dolar)\b|\$", re.I)), ("EUR", re.compile(r"\b(euros?|eur|avro)\b|€", re.I)), ("GBP", re.compile(r"\b(pounds?|gbp|sterlin\w*)\b|£", re.I)))
+ORDER_INTENT = re.compile(r"\b(take|order|buy|want|add|i'd like|i would like|istiyorum|alayım|alayim|alıyorum|aliyorum|sipariş|siparis)\b|\b(yes|evet)\b", re.I)
+
+
+def _num(x):
+    x = x.strip(".,")
+    return float(x.replace(".", "").replace(",", ".")) if x.count(".") > 1 or ("," in x) else float(x)
+
+
+DETAILS_CUT = re.compile(r"\s(?:for\s+[A-ZÇĞİÖŞÜ][\w'’]+|\+?\d[\d ]{7,}|(?:tomorrow|today|tonight|yarın|bugün|deliver\w*|my name|name is|address)\b).*$", re.S)
+
+
+def plan_search(text):
+    """A message about products: the arguments for flowers_lookup, read from the words (budget, cheapest / priciest, the product words), so the search runs in code BEFORE the model and the model
+    can answer, or place the order, in ONE call. None = not a product message (the model searches itself if it needs to)."""
+    t = text.strip()
+    if len(t) > 160 or "\n" in t or t.startswith(("[", "(replying")):  # a quoted reply is about the quoted message: the model reads the chat
+        return None
+    mx, mn = BUDGET_MAX.search(t), BUDGET_MIN.search(t)
+    sort = "price_asc" if CHEAP.search(t) else "price_desc" if PRICEY.search(t) else ""
+    if not (SEARCH.search(t) or mx or mn or sort):
+        return None
+    q = BUDGET_MIN.sub(" ", BUDGET_MAX.sub(" ", t))
+    q = CHEAP.sub(" ", PRICEY.sub(" ", q))
+    q = DETAILS_CUT.sub("", q)  # the recipient, phone, address and date that follow the product words are not part of the search
+    q = " ".join(FILLER.sub(" ", re.sub(r"[?!.,;:]", " ", q)).split())
+    q = re.sub(r"^1\s+(?=[a-zA-ZçğıöşüÇĞİÖŞÜ])", "", q)  # "1 pink rose bouquet": the leading 1 is "one", not a product number
+    out = {"query": q, "limit": 5}
+    cur = next((c for c, rx in CURRENCY_WORDS if rx.search(t)), "")
+    if cur:  # "...in euros?": the search itself returns the amounts in that currency, so the model does not have to remember to convert
+        out["currency"] = cur
+    if mx:
+        out["max_price"] = _num(mx.group(1))
+    if mn:
+        out["min_price"] = _num(mn.group(1))
+    if sort:
+        out["sort"] = sort
+    return out
+
+
+KINDS = (("flowers", re.compile(r"\b(flowers?|bouquets?|roses?|daisy|daisies|lil(?:y|ies)|çiçek\w*|buket\w*|gül\w*)\b", re.I)),
+         ("chocolate", re.compile(r"\b(chocolates?|çikolata\w*)\b", re.I)),
+         ("teddy bears", re.compile(r"\b(teddy( bears?)?|plush|ayıcık\w*|oyuncak\w*)\b", re.I)))
+
+
+def multi_kinds(text, plan):
+    """["flowers", "chocolate"] when ONE message asks for two or more kinds of product for one budget (the code then builds the combinations); [] otherwise."""
+    if not plan or not plan.get("max_price") or plan.get("currency") not in (None, "", "TRY", "TL") or len(text) > 160:
+        return []
+    ks = [k for k, rx in KINDS if rx.search(text)]
+    return ks if len(ks) >= 2 else []
+
+
+YES = re.compile(r"\b(yes|yeah|yep|yup|ok(?:ay)?|sure|perfect|great|good|fine|correct|right|confirm(?:ed)?|go ahead|do it|looks good|sounds (?:good|perfect|great|right)|that'?s (?:it|all|right|correct|perfect|everything)|evet|tamam(?:d[iı]r)?|olur|onay(?:l[ıi]yorum|la)?|do[gğ]ru|harika|m[uü]kemmel|g[uü]zel|да|хорошо|отлично|подтверждаю|верно)\b", re.I)
+CHANGE = re.compile(r"\b(but|wait|actually|change|add|also|remove|instead|rather|except|only one|cancel|what|why|how|when|where|which|not|don'?t|değiştir\w*|ekle\w*|çıkar\w*|ama|hay[ıi]r|вместо|добавь|но|нет)\b|\?", re.I)
+
+
+def is_confirmation(text):
+    """A short plain yes ("yes", "perfect", "no this sounds perfect :)", "evet tamam"): affirmative words, nothing that asks, changes or refuses. 'no, this/that ...' in front of an affirmative is a yes."""
+    t = re.sub(r"^\s*no[,.! ]+(?=(this|that|it|everything|that's|thats)\b)", "", (text or "").strip(), flags=re.I)
+    return 0 < len(t) <= 60 and bool(YES.search(t)) and not CHANGE.search(t)
+
+
+INJECTION = re.compile(r"ignore (?:all |any |the |your )?(?:previous |prior |above |earlier )?(?:instructions|rules|prompt)|(?:system|developer|hidden) (?:prompt|message|instructions)|(?:reveal|show|print|repeat|tell me|leak) (?:me )?(?:your|the) (?:prompt|instructions|rules|tools|configuration|system)|you are now\b|from now on you|act as (?:a |an |the )?(?!customer)|pretend (?:to be|you are|that)|developer mode|jailbreak|\bDAN\b|forget (?:everything|all|your)|new instructions|override (?:your|the|all)|i am (?:the|your) (?:owner|admin|developer|boss)|as the (?:owner|admin)|talimatlar[ıi]n[ıi]? (?:unut|yok say)|önceki talimat|системн\w+ (?:промпт|инструкц)|игнорируй", re.I)
+TASK = re.compile(r"\b(?:write|draft|compose|make up|generate|create)\b[^.?!]{0,30}\b(?:poem|essay|story|song|code|script|program|email|e-mail|letter|speech|article|report|cv|resume|rap)\b|\b(?:translate|solve|homework|python|javascript|html|sql|algorithm|equation|derivative|integral|capital of|who (?:is|was) the president|stock|bitcoin|crypto|weather|football score)\b|\b(?:şiir yaz|kod yaz|ödev|çevir)\b|\b(?:напиши (?:стих|код|эссе)|реши задачу)\b", re.I)
+REMIND = re.compile(r"\b(?:remind|reminder|did (?:you|they) (?:tell|inform|send|ask)|have (?:you|they) (?:told|confirmed|seen)|any (?:news|update)|is it confirmed|still waiting|confirm (?:it|my order|the order)|check (?:my|the) order|ask (?:the )?(?:team|admin|owner)|tell (?:the )?(?:team|admin|owner)|hatırlat\w*|onayland[ıi] m[ıi]|ekibe (?:söyle|sor)|напомни\w*|подтвердил\w*)\b", re.I)
+
+
+SINGULAR_REF = re.compile(r"\b(?:the|that|this|your|suggested)\s+(plant|bear|teddy|chocolate|bouquet|cake|basket|box|orchid|rose)\b(?!s)", re.I)
+
+
+TODAY_DELIVER = re.compile(r"(?=.*\?|^\s*(?:can|could|is it possible|do you|are you|will you|mümkün|olur mu|можно|возможно))(?:(?=.*\b(?:today|tonight|right now|same[- ]day|asap|now)\b)(?=.*\b(?:deliver\w*|send|get (?:it|them))\b)|(?=.*\bbug[uü]n\b)(?=.*(?:teslim|g[oö]nder|ula[sş]))|(?=.*\bbu ak[sş]am\b)(?=.*teslim)|(?=.*сегодня)(?=.*(?:достав|привез|довез)))", re.I | re.S)
+
+
+GREET_LEAD = re.compile(r"^\s*(hi+|hello+|hey+|hiya|good (?:morning|afternoon|evening)|merhaba|selam(?:lar)?|günaydın|gunaydin|iyi (?:akşamlar|günler|aksamlar|gunler))\b[\s,.!…:;-]*", re.I)
+SHORT_GREETS = ("Hi, lovely to meet you! I'm Leyla 🌸", "Merhaba, tanıştığımıza çok sevindim! Ben Leyla 🌸")
+
+
+def split_head(phone, text):
+    """A long message ("Hi... I would like to order roses. What are your hours?"): the greeting and the simple shop questions are answered AT ONCE by code (no model);
+    what is left goes to the agent. Returns (replies, the part answered, the rest)."""
+    t = text.strip()
+    if len(t) > 600 or t.startswith("[") or CYR.search(t):
+        return [], "", t
+    busy = any(r["customer_number"] == phone and r["status"] in core.OPEN + core.LOCKED for r in core.orders())
+    replies, answered = [], []
+    m = GREET_LEAD.match(t)
+    if m and not busy and len(t) > m.end() and not core.history(phone):  # a first greeting only; later ones are left to the agent
+        replies.append(SHORT_GREETS[_tr(t)])
+        answered.append(t[:m.end()].strip())
+        t = t[m.end():]
+    b, kept = core.business_info(), []
+    for ch in re.split(r"(?<=[.!?…])\s+|\n+", t):
+        c = ch.strip()
+        if c and len(c) <= 100 and not OTHER.search(c):
+            parts = [f(b, _tr(c)) for rx, f in ((HOURS, _hours), (WHERE, _where), (PHONE, _phone)) if rx.search(c) and not (rx is WHERE and MINE.search(c))]
+            if parts and all(parts):
+                replies.append("\n\n".join(parts))
+                answered.append(c)
+                continue
+        kept.append(ch)
+    return replies, " ".join(answered), " ".join(kept).strip()
+
+
+def requested_delivery_time(text):
+    """Recognise a standalone request to change delivery time; other wording stays with the agent."""
+    # shortcut: this fast path handles explicit English time changes; other languages use the normal tools.
+    m = re.fullmatch(r"\s*(?:actually[, ]*)?(?:(?:can|could|may) (?:i|we|you) )?(?:(?:i|we) (?:would like|want|wanna) (?:it )?)?(?:please )?(?:(?:(?:change|switch|move)(?: (?:it|delivery|the delivery|the time))? to|(?:deliver|delivery)(?: it)? at|make it|at) )?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?: please)?[?.! ]*", text, re.I)
+    if not m or not (m[2] or m[3] or re.search(r"\b(?:at|deliver(?:y)?(?: it)?)\s+\d{1,2}\b", text, re.I)):
+        return None
+    hour, minute = int(m[1]), int(m[2] or 0)
+    if minute > 59 or (m[3] and not 1 <= hour <= 12) or (not m[3] and hour > 23):
+        return None
+    if m[3]:
+        hour = hour % 12 + (12 if m[3].lower() == "pm" else 0)
+    elif hour <= 12 and re.search(r"\b(?:at|deliver(?:y)?(?: it)?)\s+\d{1,2}\b", text, re.I):
+        hour %= 12
+        if hour <= core.now().hour:
+            hour += 12
+    return f"{hour:02d}:{minute:02d}"
