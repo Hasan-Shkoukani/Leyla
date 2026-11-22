@@ -1,0 +1,146 @@
+{
+ "currency": "TL",
+ "note": "Prices in TL. Normal scheduled delivery is free. Jet = delivery at a specific time outside the normal schedule: the jet fee is added to the order amount. The minimum order (the products only) applies to normal and jet delivery alike.",
+ "areas": {
+  "girne": {
+   "label": {
+    "en": "Girne (Kyrenia)",
+    "tr": "Girne"
+   },
+   "names": [
+    "girne",
+    "kyrenia"
+   ],
+   "minimum": 1000,
+   "jet_fee": 500,
+   "departure": "13:00"
+  },
+  "lefkosa": {
+   "label": {
+    "en": "Lefkoşa (Nicosia)",
+    "tr": "Lefkoşa"
+   },
+   "names": [
+    "lefkoşa",
+    "lefkosa",
+    "nicosia"
+   ],
+   "minimum": 1000,
+   "jet_fee": 1000,
+   "departure": "13:00"
+  },
+  "girne_outer": {
+   "label": {
+    "en": "Çatalköy / Alsancak / Lapta",
+    "tr": "Çatalköy / Alsancak / Lapta"
+   },
+   "names": [
+    "çatalköy",
+    "catalkoy",
+    "alsancak",
+    "lapta",
+    "lapithos"
+   ],
+   "minimum": 1500,
+   "jet_fee": 1000,
+   "departure": "15:00"
+  },
+  "lefkosa_outer": {
+   "label": {
+    "en": "Lefkoşa outskirts (Haspolat and beyond)",
+    "tr": "Lefkoşa dışı (Haspolat ve uzağı)"
+   },
+   "names": [
+    "haspolat"
+   ],
+   "minimum": 1500,
+   "jet_fee": null,
+   "departure": "15:00"
+  },
+  "gazimagusa": {
+   "label": {
+    "en": "Gazimağusa (Famagusta)",
+    "tr": "Gazimağusa"
+   },
+   "names": [
+    "gazimağusa",
+    "gazimagusa",
+    "mağusa",
+    "magusa",
+    "famagusta"
+   ],
+   "minimum": 2000,
+   "jet_fee": 2000,
+   "departure": "15:00"
+  },
+  "guzelyurt": {
+   "label": {
+    "en": "Güzelyurt (Morphou)",
+    "tr": "Güzelyurt"
+   },
+   "names": [
+    "güzelyurt",
+    "guzelyurt",
+    "morphou"
+   ],
+   "minimum": 2000,
+   "jet_fee": 1500,
+   "departure": "15:00"
+  },
+  "iskele_bafra": {
+   "label": {
+    "en": "İskele / Bafra",
+    "tr": "İskele / Bafra"
+   },
+   "names": [
+    "iskele",
+    "bafra",
+    "trikomo"
+   ],
+   "minimum": 2500,
+   "jet_fee": 2500,
+   "departure": "15:00"
+  },
+  "lefke": {
+   "label": {
+    "en": "Lefke / Gemikonağı",
+    "tr": "Lefke / Gemikonağı"
+   },
+   "names": [
+    "lefke",
+    "gemikonağı",
+    "gemikonagi"
+   ],
+   "minimum": 2500,
+   "jet_fee": 2000,
+   "departure": "15:00"
+  },
+  "remote": {
+   "label": {
+    "en": "Remote villages",
+    "tr": "Uzak köyler"
+   },
+   "names": [
+    "mehmetçik",
+    "mehmetcik",
+    "yeni erenköy",
+    "yeni erenkoy",
+    "kumyalı",
+    "kumyali",
+    "ziyamet",
+    "yeşilköy",
+    "yesilkoy",
+    "kaleburnu",
+    "yedikonuk",
+    "yedidalga",
+    "bademliköy",
+    "bademlikoy",
+    "yeşilırmak",
+    "yesilirmak"
+   ],
+   "minimum": 3000,
+   "jet_fee": null,
+   "departure": "15:00"
+  }
+ }
+}

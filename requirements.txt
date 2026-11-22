@@ -1,0 +1,13 @@
+langgraph
+langchain-openai
+fastapi
+uvicorn
+openai
+python-multipart
+python-dotenv
+httpx
+pytest
+tzdata
+beautifulsoup4
+fpdf2
+pypdf

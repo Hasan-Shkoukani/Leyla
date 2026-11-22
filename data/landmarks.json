@@ -1,0 +1,982 @@
+{
+ "note": "Hand-made landmark table (from north_cyprus_delivery_locations.json). area = a key of data/delivery.json: the fee and the minimum order come from there. Airport and outskirts assignments should be confirmed with the delivery team.",
+ "landmarks": [
+  {
+   "names": [
+    "Near East University",
+    "Yakın Doğu Üniversitesi",
+    "NEU",
+    "YDÜ",
+    "Yakın Doğu",
+    "Near East campus",
+    "Near East Uni",
+    "Yakin Dogu",
+    "YDU campus",
+    "NEU campus"
+   ],
+   "area": "lefkosa",
+   "type": "university"
+  },
+  {
+   "names": [
+    "Near East University Hospital",
+    "Yakın Doğu Üniversitesi Hastanesi",
+    "NEU Hospital",
+    "YDÜ Hastanesi",
+    "Near East Hospital"
+   ],
+   "area": "lefkosa",
+   "type": "hospital"
+  },
+  {
+   "names": [
+    "Near East University Grand Library",
+    "Yakın Doğu Üniversitesi Büyük Kütüphanesi",
+    "NEU Grand Library",
+    "YDÜ Kütüphane"
+   ],
+   "area": "lefkosa",
+   "type": "landmark"
+  },
+  {
+   "names": [
+    "Near East University Cyprus Museum of Modern Arts",
+    "Yakın Doğu Üniversitesi Kıbrıs Modern Sanat Müzesi",
+    "Cyprus Museum of Modern Arts",
+    "Modern Sanat Müzesi"
+   ],
+   "area": "lefkosa",
+   "type": "museum"
+  },
+  {
+   "names": [
+    "Dr. Burhan Nalbantoğlu State Hospital",
+    "Dr. Burhan Nalbantoğlu Devlet Hastanesi",
+    "Lefkoşa Devlet Hastanesi",
+    "Burhan Nalbantoglu Hospital"
+   ],
+   "area": "lefkosa",
+   "type": "hospital"
+  },
+  {
+   "names": [
+    "Kolon British Hospital",
+    "Kolon British Hastanesi",
+    "Kolan British",
+    "British Hospital Lefkosa"
+   ],
+   "area": "lefkosa",
+   "type": "hospital"
+  },
+  {
+   "names": [
+    "Etik Hospital",
+    "Etik Hastanesi",
+    "Lefkoşa Etik"
+   ],
+   "area": "lefkosa",
+   "type": "hospital"
+  },
+  {
+   "names": [
+    "Cyprus IVF Hospital",
+    "Kıbrıs Tüp Bebek Merkezi",
+    "Cyprus IVF",
+    "Kıbrıs IVF"
+   ],
+   "area": "lefkosa",
+   "type": "hospital"
+  },
+  {
+   "names": [
+    "Cyprus International University",
+    "Uluslararası Kıbrıs Üniversitesi",
+    "CIU",
+    "UKÜ",
+    "International Cyprus University"
+   ],
+   "area": "lefkosa_outer",
+   "type": "university"
+  },
+  {
+   "names": [
+    "CIU Medical Center",
+    "UKÜ Sağlık Merkezi",
+    "CIU Health Center",
+    "CIU clinic"
+   ],
+   "area": "lefkosa_outer",
+   "type": "medical_centre"
+  },
+  {
+   "names": [
+    "Dereboyu Avenue",
+    "Dereboyu Caddesi",
+    "Dereboyu",
+    "Mehmet Akif Caddesi"
+   ],
+   "area": "lefkosa",
+   "type": "commercial_area"
+  },
+  {
+   "names": [
+    "Büyük Han",
+    "Buyuk Han",
+    "Great Inn"
+   ],
+   "area": "lefkosa",
+   "type": "landmark"
+  },
+  {
+   "names": [
+    "Selimiye Mosque",
+    "Selimiye Camii",
+    "Selimiye",
+    "St Sophia Cathedral"
+   ],
+   "area": "lefkosa",
+   "type": "landmark"
+  },
+  {
+   "names": [
+    "Sarayönü Square",
+    "Sarayönü Meydanı",
+    "Sarayonu",
+    "Atatürk Square"
+   ],
+   "area": "lefkosa",
+   "type": "landmark"
+  },
+  {
+   "names": [
+    "Bandabulya Municipal Market",
+    "Bandabuliya",
+    "Bandabulya",
+    "Municipal Market",
+    "Kapalı Çarşı"
+   ],
+   "area": "lefkosa",
+   "type": "market"
+  },
+  {
+   "names": [
+    "Kyrenia Gate",
+    "Girne Kapısı",
+    "Girne Kapi"
+   ],
+   "area": "lefkosa",
+   "type": "landmark"
+  },
+  {
+   "names": [
+    "Ledra Palace Crossing",
+    "Ledra Palace Sınır Kapısı",
+    "Ledra Palace",
+    "Lokmacı crossing"
+   ],
+   "area": "lefkosa",
+   "type": "landmark"
+  },
+  {
+   "names": [
+    "Derviş Pasha Mansion",
+    "Derviş Paşa Konağı",
+    "Dervis Pasha House",
+    "Ethnography Museum"
+   ],
+   "area": "lefkosa",
+   "type": "museum"
+  },
+  {
+   "names": [
+    "Arabahmet Mosque",
+    "Arapahmet Camii"
+   ],
+   "area": "lefkosa",
+   "type": "landmark"
+  },
+  {
+   "names": [
+    "Kumarcılar Hanı",
+    "Kumarcilar Han",
+    "Gamblers Inn"
+   ],
+   "area": "lefkosa",
+   "type": "landmark"
+  },
+  {
+   "names": [
+    "Samanbahçe Houses",
+    "Samanbahçe Evleri",
+    "Samanbahce"
+   ],
+   "area": "lefkosa",
+   "type": "landmark"
+  },
+  {
+   "names": [
+    "The English School of Kyrenia - Nicosia campus",
+    "The English School of Kyrenia Lefkoşa Kampüsü",
+    "ESK Nicosia",
+    "English School Nicosia"
+   ],
+   "area": "lefkosa",
+   "type": "school"
+  },
+  {
+   "names": [
+    "Gönyeli Yenikent",
+    "Yenikent",
+    "Gonyeli Yenikent"
+   ],
+   "area": "lefkosa_outer",
+   "type": "neighbourhood"
+  },
+  {
+   "names": [
+    "Gönyeli Stadium",
+    "Gönyeli Stadı",
+    "Gonyeli Stadium",
+    "Gönyeli futbol sahası"
+   ],
+   "area": "lefkosa_outer",
+   "type": "sports_venue"
+  },
+  {
+   "names": [
+    "Alayköy Industrial Estate",
+    "Alayköy Sanayi Bölgesi",
+    "Alaykoy Sanayi",
+    "Alayköy industrial zone"
+   ],
+   "area": "lefkosa_outer",
+   "type": "commercial_area"
+  },
+  {
+   "names": [
+    "Haspolat Industrial Area",
+    "Haspolat Sanayi Bölgesi",
+    "Haspolat Sanayi",
+    "Haspolat industrial zone"
+   ],
+   "area": "lefkosa_outer",
+   "type": "commercial_area"
+  },
+  {
+   "names": [
+    "Değirmenlik",
+    "Degirmenlik",
+    "Kythrea"
+   ],
+   "area": "lefkosa_outer",
+   "type": "town"
+  },
+  {
+   "names": [
+    "Girne American University",
+    "Girne Amerikan Üniversitesi",
+    "GAU",
+    "GAÜ",
+    "American University Girne"
+   ],
+   "area": "girne_outer",
+   "type": "university"
+  },
+  {
+   "names": [
+    "Girne American University Hospital",
+    "Girne Amerikan Üniversitesi Hastanesi",
+    "GAU Hospital"
+   ],
+   "area": "girne_outer",
+   "type": "hospital"
+  },
+  {
+   "names": [
+    "University of Kyrenia",
+    "Girne Üniversitesi",
+    "UoK",
+    "Girne University"
+   ],
+   "area": "girne",
+   "type": "university"
+  },
+  {
+   "names": [
+    "Dr. Suat Günsel University of Kyrenia Hospital",
+    "Dr. Suat Günsel Girne Üniversitesi Hastanesi",
+    "Girne University Hospital",
+    "Suat Gunsel Hospital"
+   ],
+   "area": "girne",
+   "type": "hospital"
+  },
+  {
+   "names": [
+    "Girne Dr. Akçiçek State Hospital",
+    "Girne Dr. Akçiçek Devlet Hastanesi",
+    "Girne Devlet Hastanesi",
+    "Akcicek Hospital"
+   ],
+   "area": "girne",
+   "type": "hospital"
+  },
+  {
+   "names": [
+    "Elexus Hotel Resort & Spa",
+    "Elexus",
+    "Elexus Resort"
+   ],
+   "area": "girne_outer",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Acapulco Resort Convention Spa Hotel",
+    "Acapulco",
+    "Acapulco Hotel"
+   ],
+   "area": "girne_outer",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Cratos Premium Hotel",
+    "Cratos",
+    "Cratos Hotel"
+   ],
+   "area": "girne",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Merit Park Hotel & Casino",
+    "Merit Park",
+    "Merit Park Girne"
+   ],
+   "area": "girne",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Merit Royal Diamond Hotel",
+    "Merit Royal",
+    "Merit Royal Hotel"
+   ],
+   "area": "girne_outer",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Merit Crystal Cove Hotel",
+    "Merit Crystal Cove",
+    "Crystal Cove"
+   ],
+   "area": "girne_outer",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Lord's Palace Hotel",
+    "Lords Palace",
+    "Lord Palace"
+   ],
+   "area": "girne",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Rocks Hotel & Casino",
+    "Rocks Hotel",
+    "The Rocks"
+   ],
+   "area": "girne",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Pia Bella Hotel",
+    "Pia Bella"
+   ],
+   "area": "girne",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Dome Hotel",
+    "The Dome",
+    "Dome Girne"
+   ],
+   "area": "girne",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Oscar Resort Hotel",
+    "Oscar Hotel",
+    "Oscar Resort"
+   ],
+   "area": "girne",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Vuni Palace Hotel",
+    "Vuni Palace"
+   ],
+   "area": "girne",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Grand Pasha Hotel & Casino",
+    "Grand Pasha",
+    "Pasha Hotel"
+   ],
+   "area": "girne",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Les Ambassadeurs Hotel & Casino",
+    "Les Ambassadeurs",
+    "Ambassadeurs"
+   ],
+   "area": "girne",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Chamada Prestige Hotel",
+    "Chamada",
+    "Chamada Prestige"
+   ],
+   "area": "girne_outer",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Merit Royal Premium Hotel",
+    "Merit Royal Premium"
+   ],
+   "area": "girne_outer",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Gillham Vineyard Hotel",
+    "Gillham Bağ Oteli",
+    "Gillham",
+    "Gillham Vineyard"
+   ],
+   "area": "girne_outer",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Korineum Golf & Beach Resort",
+    "Korineum",
+    "Korineum Golf"
+   ],
+   "area": "girne_outer",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Bellapais Abbey",
+    "Bellapais Manastırı",
+    "Bellapais",
+    "Bellapais Monastery"
+   ],
+   "area": "girne",
+   "type": "landmark"
+  },
+  {
+   "names": [
+    "Kyrenia Harbour",
+    "Girne Limanı",
+    "Girne Old Harbour",
+    "Kyrenia Old Harbour",
+    "Eski Liman"
+   ],
+   "area": "girne",
+   "type": "landmark"
+  },
+  {
+   "names": [
+    "Kyrenia Castle",
+    "Girne Kalesi",
+    "Girne Castle"
+   ],
+   "area": "girne",
+   "type": "landmark"
+  },
+  {
+   "names": [
+    "St. Hilarion Castle",
+    "St. Hilarion Kalesi",
+    "Saint Hilarion",
+    "Hilarion Castle"
+   ],
+   "area": "girne",
+   "type": "landmark"
+  },
+  {
+   "names": [
+    "Buffavento Castle",
+    "Buffavento Kalesi",
+    "Buffavento"
+   ],
+   "area": "girne",
+   "type": "landmark"
+  },
+  {
+   "names": [
+    "Escape Beach Club",
+    "Escape Beach",
+    "Escape Plajı"
+   ],
+   "area": "girne_outer",
+   "type": "beach"
+  },
+  {
+   "names": [
+    "Denizkızı Beach & Resort",
+    "Denizkizi",
+    "Denizkızı Hotel"
+   ],
+   "area": "girne_outer",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Alsancak National Freedom Park",
+    "Alsancak Özgürlük Milli Parkı",
+    "Alsancak Park",
+    "Özgürlük Parkı"
+   ],
+   "area": "girne_outer",
+   "type": "park"
+  },
+  {
+   "names": [
+    "Girne  American College",
+    "Girne Amerikan Koleji",
+    "GAU College",
+    "American College Girne"
+   ],
+   "area": "girne_outer",
+   "type": "school"
+  },
+  {
+   "names": [
+    "Necat British College Girne",
+    "NBC Girne",
+    "Necat Koleji"
+   ],
+   "area": "girne",
+   "type": "school"
+  },
+  {
+   "names": [
+    "Eastern Mediterranean University",
+    "Doğu Akdeniz Üniversitesi",
+    "EMU",
+    "DAÜ",
+    "Eastern Med University",
+    "DAU",
+    "Doğu Akdeniz"
+   ],
+   "area": "gazimagusa",
+   "type": "university"
+  },
+  {
+   "names": [
+    "Famagusta State Hospital",
+    "Gazimağusa Devlet Hastanesi",
+    "Mağusa Devlet Hastanesi",
+    "Magusa Hospital"
+   ],
+   "area": "gazimagusa",
+   "type": "hospital"
+  },
+  {
+   "names": [
+    "City Mall Famagusta",
+    "City Mall Gazimağusa",
+    "City Mall",
+    "Mağusa City Mall"
+   ],
+   "area": "gazimagusa",
+   "type": "shopping_mall"
+  },
+  {
+   "names": [
+    "Anfora Shopping and Life Center",
+    "Anfora Alışveriş ve Yaşam Merkezi",
+    "Anfora Mall",
+    "Anfora AVM"
+   ],
+   "area": "iskele_bafra",
+   "type": "shopping_mall"
+  },
+  {
+   "names": [
+    "Salamis Bay Conti Resort Hotel",
+    "Salamis Bay Conti",
+    "Salamis Hotel"
+   ],
+   "area": "gazimagusa",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Arkin Palm Beach Hotel",
+    "Arkın Palm Beach Hotel",
+    "Palm Beach Hotel",
+    "Arkin Palm Beach"
+   ],
+   "area": "gazimagusa",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Othello Castle",
+    "Othello Kalesi",
+    "Othello Tower"
+   ],
+   "area": "gazimagusa",
+   "type": "landmark"
+  },
+  {
+   "names": [
+    "Famagusta Walled City",
+    "Gazimağusa Suriçi",
+    "Mağusa Suriçi",
+    "Old Famagusta",
+    "Walled City"
+   ],
+   "area": "gazimagusa",
+   "type": "landmark"
+  },
+  {
+   "names": [
+    "Lala Mustafa Pasha Mosque",
+    "Lala Mustafa Paşa Camii",
+    "St Nicholas Cathedral",
+    "Lala Mustafa Pasa"
+   ],
+   "area": "gazimagusa",
+   "type": "landmark"
+  },
+  {
+   "names": [
+    "Namık Kemal Dungeon and Museum",
+    "Namık Kemal Zindanı ve Müzesi",
+    "Namik Kemal Museum",
+    "Namık Kemal Zindanı"
+   ],
+   "area": "gazimagusa",
+   "type": "museum"
+  },
+  {
+   "names": [
+    "Salamis Ancient City",
+    "Salamis Antik Kenti",
+    "Salamis Ruins",
+    "Salamis Ören Yeri"
+   ],
+   "area": "gazimagusa",
+   "type": "landmark"
+  },
+  {
+   "names": [
+    "St. Barnabas Monastery",
+    "St. Barnabas Manastırı",
+    "Barnabas Monastery",
+    "İkon Müzesi"
+   ],
+   "area": "gazimagusa",
+   "type": "landmark"
+  },
+  {
+   "names": [
+    "Palm Beach Famagusta",
+    "Palm Beach Gazimağusa",
+    "Palm Beach",
+    "Maraş sahili"
+   ],
+   "area": "gazimagusa",
+   "type": "beach"
+  },
+  {
+   "names": [
+    "Eastern Mediterranean University Technopark",
+    "DAÜ Teknopark",
+    "EMU Technopark",
+    "DAÜ Teknoloji Geliştirme Bölgesi"
+   ],
+   "area": "gazimagusa",
+   "type": "commercial_area"
+  },
+  {
+   "names": [
+    "Canbulat Museum",
+    "Canbulat Müzesi"
+   ],
+   "area": "gazimagusa",
+   "type": "museum"
+  },
+  {
+   "names": [
+    "Gazimağusa Port",
+    "Gazimağusa Limanı",
+    "Famagusta Port",
+    "Mağusa Liman"
+   ],
+   "area": "gazimagusa",
+   "type": "transport_hub"
+  },
+  {
+   "names": [
+    "Varosha / Maraş",
+    "Kapalı Maraş",
+    "Varosha",
+    "Maraş",
+    "Ghost Town"
+   ],
+   "area": "gazimagusa",
+   "type": "landmark"
+  },
+  {
+   "names": [
+    "Near East Yeniboğaziçi College",
+    "Yakın Doğu Yeniboğaziçi Koleji",
+    "YDÜ Yeniboğaziçi",
+    "NEU Yenibogazici College"
+   ],
+   "area": "gazimagusa",
+   "type": "school"
+  },
+  {
+   "names": [
+    "The Arkın İskele Hotel",
+    "Arkin Iskele",
+    "Arkın İskele"
+   ],
+   "area": "iskele_bafra",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Kaya Artemis Resort",
+    "Kaya Artemis",
+    "Artemis Hotel"
+   ],
+   "area": "iskele_bafra",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Noah's Ark Deluxe Hotel & Spa",
+    "Noahs Ark",
+    "Noah's Ark Bafra"
+   ],
+   "area": "iskele_bafra",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Concorde Luxury Resort",
+    "Concorde Bafra",
+    "Concorde Hotel"
+   ],
+   "area": "iskele_bafra",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Limak Cyprus Deluxe Hotel",
+    "Limak Cyprus",
+    "Limak Bafra"
+   ],
+   "area": "iskele_bafra",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Grand Sapphire Resort",
+    "Grand Sapphire",
+    "Sapphire Iskele"
+   ],
+   "area": "iskele_bafra",
+   "type": "hotel"
+  },
+  {
+   "names": [
+    "Long Beach İskele",
+    "İskele Long Beach",
+    "Long Beach",
+    "Uzun Plaj",
+    "Iskele Beach"
+   ],
+   "area": "iskele_bafra",
+   "type": "beach"
+  },
+  {
+   "names": [
+    "İskele Belediyesi Halk Plajı",
+    "Iskele Public Beach",
+    "İskele Halk Plajı"
+   ],
+   "area": "iskele_bafra",
+   "type": "beach"
+  },
+  {
+   "names": [
+    "Boğaz Fishing Harbour",
+    "Boğaz Balıkçı Limanı",
+    "Bogaz Harbour",
+    "Boğaz Limanı"
+   ],
+   "area": "iskele_bafra",
+   "type": "landmark"
+  },
+  {
+   "names": [
+    "Bafra Tourism Centre",
+    "Bafra Turizm Merkezi",
+    "Bafra Hotels Area",
+    "Bafra Tourism Zone"
+   ],
+   "area": "iskele_bafra",
+   "type": "commercial_area"
+  },
+  {
+   "names": [
+    "Apostolos Andreas Monastery",
+    "Apostolos Andreas Manastırı",
+    "Apostolos Andreas",
+    "Karpaz Monastery"
+   ],
+   "area": "iskele_bafra",
+   "type": "landmark"
+  },
+  {
+   "names": [
+    "Golden Beach Karpaz",
+    "Karpaz Altınkum Plajı",
+    "Golden Beach",
+    "Altınkum",
+    "Golden Sands"
+   ],
+   "area": "iskele_bafra",
+   "type": "beach"
+  },
+  {
+   "names": [
+    "Middle East Technical University Northern Cyprus Campus",
+    "Orta Doğu Teknik Üniversitesi Kuzey Kıbrıs Kampüsü",
+    "METU NCC",
+    "ODTÜ KKK",
+    "ODTU Kalkanli"
+   ],
+   "area": "guzelyurt",
+   "type": "university"
+  },
+  {
+   "names": [
+    "Cyprus Health and Social Sciences University",
+    "Kıbrıs Sağlık ve Toplum Bilimleri Üniversitesi",
+    "CHSSU",
+    "KSTÜ"
+   ],
+   "area": "guzelyurt",
+   "type": "university"
+  },
+  {
+   "names": [
+    "Cengiz Topel State Hospital",
+    "Cengiz Topel Devlet Hastanesi",
+    "Yeşilyurt Hastanesi",
+    "Cengiz Topel Hospital"
+   ],
+   "area": "guzelyurt",
+   "type": "hospital"
+  },
+  {
+   "names": [
+    "Güzelyurt Archaeology and Nature Museum",
+    "Güzelyurt Arkeoloji ve Doğa Müzesi",
+    "Guzelyurt Museum",
+    "Morphou Museum"
+   ],
+   "area": "guzelyurt",
+   "type": "museum"
+  },
+  {
+   "names": [
+    "St. Mamas Monastery",
+    "Aziz Mamas Manastırı",
+    "St Mamas Church",
+    "Mamas Monastery"
+   ],
+   "area": "guzelyurt",
+   "type": "landmark"
+  },
+  {
+   "names": [
+    "Güzelyurt City Centre",
+    "Güzelyurt Şehir Merkezi",
+    "Morphou Centre",
+    "Guzelyurt merkez"
+   ],
+   "area": "guzelyurt",
+   "type": "commercial_area"
+  },
+  {
+   "names": [
+    "Kalkanlı ODTÜ Campus Area",
+    "Kalkanlı ODTÜ Kampüs Bölgesi",
+    "Kalkanli campus",
+    "ODTU campus"
+   ],
+   "area": "guzelyurt",
+   "type": "neighbourhood"
+  },
+  {
+   "names": [
+    "Güzelyurt Open Market",
+    "Güzelyurt Açık Pazarı",
+    "Guzelyurt Market",
+    "Morphou market"
+   ],
+   "area": "guzelyurt",
+   "type": "market"
+  },
+  {
+   "names": [
+    "Ercan International Airport",
+    "Ercan Uluslararası Havalimanı",
+    "Ercan Airport",
+    "Ercan Havalimanı",
+    "ECN",
+    "Tymbou Airport"
+   ],
+   "area": "lefkosa_outer",
+   "type": "airport"
+  },
+  {
+   "names": [
+    "Erülkü Supermarket",
+    "Erülkü Süpermarket",
+    "Erulku",
+    "Erülkü",
+    "Erülkü Market",
+    "Erülkü Lefkoşa"
+   ],
+   "area": "lefkosa_outer",
+   "type": "supermarket"
+  }
+ ]
+}

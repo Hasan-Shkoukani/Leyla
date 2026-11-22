@@ -1,0 +1,9 @@
+# Heavy deps: install ONLY on the training machine. predict.py itself needs just numpy + pillow + torch + open_clip_torch at inference.
+torch
+torchvision
+open_clip_torch
+numpy
+pillow
+requests
+tqdm
+pytest

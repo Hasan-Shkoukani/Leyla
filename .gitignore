@@ -1,0 +1,50 @@
+# secrets
+.env
+dash_users.json
+dash_sessions.json
+# customer and order data (runtime state)
+customers.json
+orders.csv
+orders.csv.prev
+daily.csv
+weekly.csv
+monthly.csv
+chat.db
+chats/
+admin_chats/
+inbox.json
+inbox_media/
+incoming/
+outbox/
+documents/
+order_backups/
+backups/
+payments.jsonl
+tg_updates.json
+removed.json
+custom.json
+overrides.json
+metrics.jsonl
+photo_decisions.log
+server.log
+*.log
+admin_photo.jpg
+team/
+thumbs/
+reports/
+# caches, scraped data, models and datasets
+prices.json
+prices_cache.json
+data/raw/
+data/graph.json.bak
+scraper/cache*/
+scraper/cache
+scraper/cache.prev
+dl/data/
+dl/artifacts/
+# tooling
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.bak

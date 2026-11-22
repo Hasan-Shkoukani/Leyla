@@ -1,0 +1,28 @@
+{
+ "cancellation": {
+  "en": "Orders not yet in preparation may be cancelled. Due to the perishable nature of flowers, cancellations after preparation may not be accepted. For quality issues, just message us here within 24 hours with a photo.",
+  "tr": "Henüz hazırlanmaya başlanmamış siparişler iptal edilebilir. Çiçeklerin çabuk bozulan yapısı nedeniyle, hazırlık başladıktan sonraki iptaller kabul edilmeyebilir. Kalite sorunları için 24 saat içinde fotoğrafla birlikte buradan bize yazmanız yeterli.",
+  "ru": "Заказы, которые ещё не начали готовить, можно отменить. Из-за скоропортящейся природы цветов отмена после начала подготовки может быть не принята. По вопросам качества просто напишите нам здесь в течение 24 часов, приложив фото."
+ },
+ "same_day": {
+  "en": "Orders placed before the cutoff time are prepared and delivered the same day.",
+  "tr": "Belirlenen saatten önce verilen siparişler aynı gün hazırlanır ve seçtiğiniz adrese teslim edilir.",
+  "ru": "Заказы, оформленные до установленного времени, готовятся и доставляются в тот же день."
+ },
+ "quality_too_late": {
+  "en": "It has been more than 24 hours since the delivery, so unfortunately this is not possible.",
+  "tr": "Teslimattan bu yana 24 saatten fazla geçtiği için maalesef bunu yapamıyoruz.",
+  "ru": "С момента доставки прошло более 24 часов, поэтому, к сожалению, это невозможно."
+ },
+ "not_same_day": {
+  "en": "{item} is not available for same-day delivery: the earliest date is tomorrow.",
+  "tr": "{item} aynı gün teslimat için uygun değil: en erken teslimat tarihi yarındır.",
+  "ru": "{item} недоступен для доставки в тот же день: ближайшая дата доставки — завтра."
+ },
+ "blog": {
+  "en": "https://kibrisciceksepetim.com/en/blog",
+  "tr": "https://kibrisciceksepetim.com/tr/blog",
+  "ru": "https://kibrisciceksepetim.com/ru/blog"
+ },
+ "quality_hours": 26
+}

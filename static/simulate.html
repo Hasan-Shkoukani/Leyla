@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en" id="html"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Customer Simulation</title>
+<style>@font-face{font-family:'Bricolage Grotesque';font-style:normal;font-weight:500 800;font-display:swap;src:url(/assets/fonts/bricolage-latin-ext.woff2) format('woff2');unicode-range:U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF}
+@font-face{font-family:'Bricolage Grotesque';font-style:normal;font-weight:500 800;font-display:swap;src:url(/assets/fonts/bricolage-latin.woff2) format('woff2');unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+@font-face{font-family:'Figtree';font-style:normal;font-weight:400 700;font-display:swap;src:url(/assets/fonts/figtree-latin-ext.woff2) format('woff2');unicode-range:U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF}
+@font-face{font-family:'Figtree';font-style:normal;font-weight:400 700;font-display:swap;src:url(/assets/fonts/figtree-latin.woff2) format('woff2');unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD}
+
+:root{--p:#7b4dff;--pd:#6a3de8;--pl:#eee6ff;--bg:#f4efff;--panel:#fff;--ink:#24123f;--mut:#6c5a8f;--line:#e2d7f7;--line2:#cdbdee;--grad:linear-gradient(135deg,#b794ff,#e79bff);--page:linear-gradient(160deg,#f7f1ff,#ebe0ff 55%,#f4e2ff);--fd:'Bricolage Grotesque','Figtree',system-ui,sans-serif;--fu:'Figtree',system-ui,sans-serif}
+@media(prefers-color-scheme:dark){:root{--p:#b794ff;--pd:#a07bf5;--pl:#2c1a55;--bg:#150a28;--panel:#22133f;--ink:#f2eaff;--mut:#b3a1d8;--line:#3b2868;--line2:#523888;--grad:linear-gradient(135deg,#b794ff,#e79bff);--page:linear-gradient(160deg,#150a28,#24114d 55%,#361b70)}}
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 var(--fu);background:var(--page) fixed,var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased}
+:focus-visible{outline:2px solid var(--p);outline-offset:2px}
+header{padding:16px 24px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+header h1{font:650 24px/1.15 var(--fd);letter-spacing:-.02em;margin:0 auto 0 0}header h1 small{font:500 14px var(--fu);color:var(--mut);letter-spacing:0}
+header button,header select{border:1px solid var(--line2);border-radius:8px;height:36px;padding:0 14px;cursor:pointer;font:500 14px var(--fu);background:var(--panel);color:var(--ink)}
+header button:hover{background:var(--pl)}header button.hot{background:var(--grad);border-color:transparent;color:#fff}header button.hot:hover{background:var(--pd)}header button:disabled{opacity:.5;cursor:default}
+@media(prefers-color-scheme:dark){header button.hot{color:#1a0b33}}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;padding:6px 24px 14px}
+.w{background:var(--panel);border:1px solid var(--line);border-radius:14px;display:flex;flex-direction:column;height:360px;overflow:hidden}
+.w.adm{border-color:var(--p)}.t{padding:9px 12px;background:var(--pl);color:var(--ink);font-size:13px;display:flex;justify-content:space-between;align-items:center}
+.t.a{background:var(--pl)}.t b{font-weight:600}.t button{border:0;background:none;cursor:pointer;color:var(--mut)}
+.c{flex:1;overflow:auto;padding:10px;background:var(--bg);display:flex;flex-direction:column;gap:5px}
+.b{max-width:85%;padding:7px 11px;border-radius:14px;white-space:pre-wrap;word-break:break-word;font-size:13.5px;border:1px solid var(--line)}
+.me{align-self:flex-end;background:var(--grad);border-color:transparent;color:#fff}.bot{align-self:flex-start;background:var(--panel)}.b img{max-width:150px;border-radius:8px;display:block}.b a{color:var(--p)}.me a{color:#fff}
+@media(prefers-color-scheme:dark){.me{color:#1a0b33}.me a{color:#1a0b33}}
+.s{display:flex;gap:6px;padding:8px;border-top:1px solid var(--line)}.s input{flex:1;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:999px;padding:7px 12px;font:inherit;min-width:0}
+.s button{border:0;border-radius:50%;width:34px;background:var(--p);color:#fff;cursor:pointer}
+header .nav3{display:flex;gap:6px}header .nav3 a{padding:7px 12px;border-radius:8px;border:1px solid var(--line2);color:var(--ink);text-decoration:none;font-weight:500}header .nav3 a.on{background:var(--p);border-color:var(--p);color:#fff}
+#log{margin:0 24px 24px;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:14px;padding:12px;height:170px;overflow:auto;font:12.5px/1.5 ui-monospace,monospace}
+#log div{padding:3px 0;border-bottom:1px solid var(--line)}.al{color:#b4730a;font-weight:600}
+html.embed .nav3{display:none!important}
+</style><style>/* plain black */
+:root,html:root{--p:#fff;--pd:#d8d8d8;--pl:#141414;--bg:#000;--panel:#000;--ink:#f2f2f2;--mut:#9a9a9a;--line:#2b2b2b;--line2:#3a3a3a;--grad:#262626;--page:#000;color-scheme:dark}
+body{background:#000!important}header button.hot,.s button,header .nav3 a.on{color:#000!important}.me{color:#fff!important;background:#262626!important;border-color:#3a3a3a!important}.me a{color:#fff!important}
+.w,#log,.box2{background:#000}.t,.t.a{background:#141414}.c{background:#000}.bot{background:#0d0d0d}.s{background:#000}.s input{background:#000;color:#f2f2f2}
+.s button.at,.s button.mic{background:#1a1a1a;color:#f2f2f2;border:1px solid #3a3a3a}.s button.mic.rec{background:#c0392b;color:#fff;border-color:#c0392b;animation:pulse 1s infinite}@keyframes pulse{50%{opacity:.55}}
+.b audio{display:block;max-width:230px;height:34px}.b img{cursor:zoom-in}.b .fa{display:inline-flex;gap:6px;align-items:center;cursor:pointer;color:#fff;text-decoration:underline}
+#fsroot{display:none;gap:12px;padding:8px 14px 14px;flex:1 1 0;min-height:0}html.simfs #fsroot{display:flex}html.simfs body{height:100vh;height:100dvh;display:flex;flex-direction:column;overflow:hidden}html.simfs header{flex:none}  /* the header can be one or two rows: the windows take exactly what is left, so their input bars are never cut off */html.simfs #grid,html.simfs #log{display:none}html.simfs header{padding:10px 16px}html.simfs{overflow:hidden}
+#fsl{flex:0 0 min(430px,31vw);min-width:300px;display:flex}#fsl .w{flex:1;height:100%}
+#fsr{flex:1;min-width:0;display:grid;gap:12px;overflow:hidden}#fsr .w{height:100%;min-height:0;min-width:0}  /* the columns / rows are set by layout(): always all the space, divided equally */
+#simfx{position:fixed;inset:0;z-index:90;display:none;align-items:center;justify-content:center;background:#000a;backdrop-filter:blur(26px) saturate(.7);-webkit-backdrop-filter:blur(26px) saturate(.7);opacity:0}
+#simfx.on{display:flex;animation:fxin .35s ease forwards}#simfx.out{animation:fxout .5s ease forwards}@keyframes fxin{to{opacity:1}}@keyframes fxout{from{opacity:1}to{opacity:0}}
+#simfx .fxc{display:flex;flex-direction:column;align-items:center;gap:22px}#simfx .ring{width:64px;height:64px;border-radius:50%;border:2px solid #2b2b2b;border-top-color:#fff;border-right-color:#9a9a9a;animation:fxspin 1s linear infinite}
+#simfx .fxt{font:650 clamp(30px,6vw,64px)/1 var(--fd);letter-spacing:.02em;color:#fff;display:flex}#simfx .fxt span{display:inline-block;opacity:0;transform:translateY(14px) scale(.9);filter:blur(8px);animation:fxch .6s cubic-bezier(.2,.8,.2,1) forwards}
+#simfx .bar{width:min(320px,60vw);height:3px;background:#222;border-radius:3px;overflow:hidden}#simfx .bar i{display:block;height:100%;width:40%;background:linear-gradient(90deg,transparent,#fff,transparent);animation:fxbar 1.1s ease-in-out infinite}
+@keyframes fxspin{to{transform:rotate(360deg)}}@keyframes fxch{to{opacity:1;transform:none;filter:none}}@keyframes fxbar{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
+@media(prefers-reduced-motion:reduce){#simfx .ring,#simfx .bar i{animation:none}#simfx .fxt span{animation:none;opacity:1;transform:none;filter:none}}
+#viewer{position:fixed;inset:0;background:#000d;display:none;align-items:center;justify-content:center;z-index:50;padding:14px}#viewer.on{display:flex}
+#viewer .vb{background:#000;border:1px solid #3a3a3a;border-radius:14px;width:min(980px,100%);max-height:94vh;display:flex;flex-direction:column;overflow:hidden}
+#viewer .vh{display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid #2b2b2b}#viewer .vh b{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#viewer .vh a,#viewer .vh button{border:1px solid #3a3a3a;background:#141414;color:#f2f2f2;border-radius:8px;padding:6px 12px;cursor:pointer;text-decoration:none;font:500 13px var(--fu)}
+#viewer .vc{flex:1;min-height:0;overflow:auto;display:flex;align-items:center;justify-content:center;padding:10px}#viewer iframe{width:100%;height:78vh;border:0;background:#fff;border-radius:8px}#viewer img{max-width:100%;max-height:78vh}
+</style>
+<style>/* animated glowing gradients on the black: a drifting aurora behind, glowing gradient borders on every window, a colour line under the header, coloured bubbles and title */
+@property --ga{syntax:"<angle>";inherits:false;initial-value:0deg}
+body::before{content:"";position:fixed;inset:-20vmax;z-index:-1;pointer-events:none;opacity:.55;filter:blur(60px);background:radial-gradient(38vmax 30vmax at 12% 18%,#7b4dff88,transparent 70%),radial-gradient(34vmax 28vmax at 88% 12%,#ff4fa355,transparent 70%),radial-gradient(40vmax 32vmax at 78% 90%,#22d3ee44,transparent 70%),radial-gradient(30vmax 26vmax at 8% 88%,#ffb34744,transparent 70%);animation:aurora 22s ease-in-out infinite alternate}
+@keyframes aurora{0%{transform:translate3d(0,0,0) rotate(0deg) scale(1)}50%{transform:translate3d(3vmax,-2vmax,0) rotate(8deg) scale(1.12)}100%{transform:translate3d(-3vmax,3vmax,0) rotate(-6deg) scale(1.05)}}
+.w{border:1px solid #2a2a3a;background:#050507}.w.adm{border-color:#3a2a22}
+
+.t,.t.a{background:linear-gradient(90deg,#150a2e,#0a0a12 60%,#0a1620)}.w.adm .t{background:linear-gradient(90deg,#2a1406,#0a0a12 60%,#1e0a1e)}
+.me{background:linear-gradient(135deg,#7b4dff,#e745a6)!important;border-color:transparent!important;box-shadow:0 4px 18px -8px #e745a6aa}
+.bot{background:#0d0d14;border-color:#2a2a3a}
+header{position:relative}header::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;background:linear-gradient(90deg,#7b4dff,#e745a6,#22d3ee,#ffb347,#7b4dff);background-size:300% 100%;animation:hline 6s linear infinite;box-shadow:0 0 14px #e745a688}@keyframes hline{to{background-position:-300% 0}}
+header h1 #ttl{background:linear-gradient(90deg,#fff,#c9b3ff,#ff9ed2,#8be9ff,#fff);background-size:300% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:hline 8s linear infinite}
+header button.hot{background:linear-gradient(135deg,#7b4dff,#e745a6)!important;color:#fff!important;border-color:transparent!important;box-shadow:0 0 18px -6px #e745a6}
+.s button.go{background:linear-gradient(135deg,#7b4dff,#e745a6);color:#fff!important}.s input:focus{border-color:#a78bfa;box-shadow:0 0 0 3px #7b4dff44;outline:none}
+@media(prefers-reduced-motion:reduce){body::before,header::after,header h1 #ttl{animation:none}header h1 #ttl{color:#fff;-webkit-text-fill-color:#fff}}
+#mode,#nsel,#addall,#rand,#clr{display:none!important}header::after{display:none}header button.hot,.s button.go{background:#262626!important;background-image:none!important;border-color:#3a3a3a!important;color:#f2f2f2!important;box-shadow:none!important}header button.hot:hover,.s button.go:hover{background:#333!important;filter:none!important}.s button.go{background:#262626!important;border:1px solid #3a3a3a!important}#add,#go{min-height:44px;padding:0 18px;font-weight:600}.s button.at,.s button.mic{display:grid;place-items:center;width:36px;height:36px;flex:none;border-radius:50%;background:#1a1a1a;color:#c9c9d4;border:1px solid #3a3a3a}.s button.at:hover,.s button.mic:hover{background:#292932;color:#fff}.s button svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+</style>
+<script>if(location.search.includes('embed'))document.documentElement.classList.add('embed')</script></head><body>
+<style>/* one height for every button in the top bar; light icons on the attach / mic buttons (an older rule painted them black) */header button,header select,header .nav3 a{box-sizing:border-box;height:40px!important;min-height:40px!important;padding-top:0!important;padding-bottom:0!important;display:inline-flex;align-items:center;justify-content:center;line-height:1}.s button.at,.s button.mic{color:#f2f2f2!important}.s button.at:hover,.s button.mic:hover{color:#fff!important}</style>
+<style>.t,.t.a,.w.adm .t{background:#000!important;color:#fff!important;border-bottom:1px solid #2a2a2a}.t b,.t button{color:#fff!important}
+.c{background:linear-gradient(135deg,#000,#1c1c1c,#000,#101010)!important;background-size:300% 300%!important;animation:cbg 14s ease-in-out infinite}@keyframes cbg{50%{background-position:100% 100%}}@media(prefers-reduced-motion:reduce){.c{animation:none}}
+.w.adm .c>:first-child{margin-top:auto}</style>
+<style>/* elegant plain black: no borders anywhere, depth comes from slightly lighter surfaces */
+/* no glow or shadow on text, bubbles or buttons; the title is plain white */
+html body *,html body *::before,html body *::after{text-shadow:none!important;box-shadow:none!important}
+html body header h1 #ttl{background:none!important;-webkit-text-fill-color:#fff!important;color:#fff!important;animation:none!important;filter:none!important}
+html body{background:#000!important}html body header::after{display:none!important}
+html body header{padding:18px 28px}html body header h1{font-weight:600;letter-spacing:-.01em}
+html body header button,html body header select,html body header .nav3 a{background:#111!important;border:0!important;border-radius:12px!important;box-shadow:none!important;color:#d8d8d8!important;font-weight:500}
+html body header button:hover,html body header .nav3 a:hover{background:#1a1a1a!important;color:#fff!important}
+html body header button.hot,html body header .nav3 a.on{background:#f2f2f2!important;background-image:none!important;color:#000!important}
+html body header button.hot:hover{background:#fff!important}
+html body .w,html body .w.adm{background:#0b0b0b!important;border:0!important;border-radius:20px!important;box-shadow:none!important}
+html body .t,html body .t.a,html body .w.adm .t{background:#0b0b0b!important;border:0!important;padding:16px 18px!important;font-size:14px;letter-spacing:.01em}
+html body .c{background:linear-gradient(135deg,#0b0b0b,#151515,#0b0b0b,#101010)!important;background-size:300% 300%!important;padding:14px!important}
+html body .b{border:0!important;border-radius:16px;padding:9px 13px}html body .bot{background:#181818!important}html body .me{background:#2a2a2a!important}
+html body .s{background:#0b0b0b!important;border:0!important;padding:12px!important;gap:8px}
+html body .s input[type=text]{background:#151515!important;border:0!important;box-shadow:none!important;border-radius:999px;padding:10px 16px}
+html body .s input[type=text]:focus{background:#1a1a1a!important;box-shadow:none!important;outline:none}
+html body .s button.at,html body .s button.mic{background:transparent!important;border:0!important;color:#9a9a9a!important}
+html body .s button.at:hover,html body .s button.mic:hover{background:#1a1a1a!important;color:#fff!important}
+html body .s button.go{background:#f2f2f2!important;background-image:none!important;border:0!important;color:#000!important}
+html body .s button.go:hover{background:#fff!important}
+html body .t button{color:#777!important}html body .t button:hover{color:#fff!important}
+html body #log{background:#0b0b0b!important;border:0!important;border-radius:20px}html body #log div{border:0!important}
+html body #viewer .vb{background:#0b0b0b!important;border:0!important;border-radius:20px}html body #viewer .vh a,html body #viewer .vh button{background:#1a1a1a!important;border:0!important;border-radius:10px}
+html body .t{padding:10px 12px!important;gap:10px;justify-content:flex-start!important}html body .t>span{margin-left:auto;display:flex;align-items:center;gap:6px}
+html body .t .av{width:30px;height:30px;flex:none;border-radius:50%;background:#1c1c1c;color:#e6e6e6;display:grid;place-items:center;font:600 11px/1 var(--fu);font-style:normal;letter-spacing:.03em}
+html body .t .who{display:flex;flex-direction:column;min-width:0;line-height:1.25}html body .t .who b{font-size:13px;font-weight:600;color:#fff!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}html body .t .who small{font:11px ui-monospace,monospace;color:#7d7d7d}
+html body .t .lg{font:600 10px/1 var(--fu);font-style:normal;letter-spacing:.06em;color:#bdbdbd;background:#1a1a1a;border-radius:6px;padding:4px 6px}
+html body .c{padding:10px!important;gap:4px}html body .b{padding:7px 11px;font-size:13px}
+html body .s{padding:8px 10px!important}html body .s input[type=text]{padding:7px 14px;font-size:13px}html body .s button{width:30px!important;height:30px!important}html body .s button.at,html body .s button.mic{width:30px!important;height:30px!important}html body .s button svg{width:15px;height:15px}
+html body header{padding:12px 24px}html body header h1{font-size:20px}
+html body header button,html body header select,html body header .nav3 a{height:34px!important;min-height:34px!important;font-size:13px;padding:0 12px!important}
+/* a dark gradient flowing behind the windows, which are a little see-through */
+html body::before{display:block!important;opacity:.7;filter:blur(70px);background:radial-gradient(38vmax 30vmax at 12% 18%,#3b2f8a99,transparent 70%),radial-gradient(34vmax 28vmax at 88% 12%,#7a2f6a77,transparent 70%),radial-gradient(40vmax 32vmax at 78% 90%,#1c5a7a77,transparent 70%),radial-gradient(30vmax 26vmax at 8% 88%,#5a3a1c66,transparent 70%)!important;animation:aurora 18s ease-in-out infinite alternate}
+html body .w,html body .w.adm{background:rgba(10,10,10,.74)!important;backdrop-filter:blur(18px)}
+html body .t,html body .t.a,html body .w.adm .t,html body .s{background:transparent!important}
+html body .c{background:transparent!important;animation:none}
+</style>
+<header><h1><span id="ttl">Customer simulation</span> <small id="cnt"></small></h1><nav class="nav3"><a href="/" id="nv1">Chat</a><a href="/simulate" class="on" id="nv2">Simulation</a><a href="/dashboard" id="nv3">Dashboard</a></nav>
+<select id="mode" title="Mode"><option value="sim" id="om1">Random 3-round simulation</option><option value="chat" id="om2">Chat as a customer</option></select><select id="nsel" title="Simultaneous customers"><option value="1">1 customer</option><option value="2">2 customers</option><option value="3" selected>3 customers</option><option value="4">4 customers</option><option value="5">5 customers</option><option value="6">6 customers</option><option value="7">7 customers</option><option value="8">8 customers</option><option value="9">9 customers</option><option value="10">10 customers</option></select><button id="add"></button><button class="hot" id="go">Run 3-round chat</button><button id="addall"></button><button class="hot" id="rand"></button><button id="clr"></button><button id="sbr2" style="display:none"></button><button id="sbs2" style="display:none"></button><button class="hot" id="bk" style="display:none"></button></header>
+<div id="grid"></div><div id="fsroot"><div id="fsl"></div><div id="fsr"></div></div><div id="log"></div>
+<div id="simfx" aria-live="polite"><div class="fxc"><div class="ring"></div><div class="fxt" id="fxt"></div><div class="bar"><i></i></div></div></div>
+<div id="viewer"><div class="vb"><div class="vh"><b id="vt"></b><a id="vd" download>Download</a><a id="vn" target="_blank" rel="noopener">New tab</a><button id="vx">✕</button></div><div class="vc" id="vc"></div></div></div>
+<script>
+const BASE=location.pathname.startsWith('/sandbox')?'/sandbox':'';
+const UI={en:{back:'← Dashboard',sbreset:'Reset and stop',sbstop:'Stop',simmode:'Simulation Mode',attach:'Attach a file',voice:'Record a voice message',nomic:'Microphone not available',nopreview:'No preview for this file type: use Download',ttl:'Customer simulation',nv1:'Chat',nv2:'Simulation',nv3:'Dashboard',om1:'Random 3-round simulation',om2:'Chat as a customer',n:n=>n==1?'1 customer':n+' customers',go:'Run 3-round chat',chat:'💬 Start chat',add:'+ add customer',addall:'+ fill to 10',rand:'🎲 random orders from all',clr:'remove all',msg:'message…',adm:'🛠 Admin · '},
+ tr:{back:'← Panele dön',sbreset:'Sıfırla ve durdur',sbstop:'Durdur',simmode:'Simülasyon Modu',attach:'Dosya ekle',voice:'Sesli mesaj kaydet',nomic:'Mikrofon kullanılamıyor',nopreview:'Bu dosya türü için önizleme yok: İndir düğmesini kullanın',ttl:'Müşteri simülasyonu',nv1:'Sohbet',nv2:'Simülasyon',nv3:'Pano',om1:'Rastgele 3 turlu simülasyon',om2:'Müşteri olarak sohbet et',n:n=>n+' müşteri',go:'3 turluk sohbeti başlat',chat:'💬 Sohbeti başlat',add:'+ müşteri ekle',addall:'+ 10\'a tamamla',rand:'🎲 herkesten rastgele sipariş',clr:'hepsini kaldır',msg:'mesaj…',adm:'🛠 Yönetici · '},
+ ru:{back:'← В панель',sbreset:'Сбросить и остановить',sbstop:'Остановить',simmode:'Режим симуляции',attach:'Прикрепить файл',voice:'Записать голосовое',nomic:'Микрофон недоступен',nopreview:'Для этого типа файла нет просмотра: используйте «Скачать»',ttl:'Симуляция клиентов',nv1:'Чат',nv2:'Симуляция',nv3:'Панель',om1:'Случайная симуляция из 3 раундов',om2:'Чат в роли клиента',n:n=>n+(n==1?' клиент':n<5?' клиента':' клиентов'),go:'Запустить чат из 3 раундов',chat:'💬 Начать чат',add:'+ добавить клиента',addall:'+ добавить до 10',rand:'🎲 случайные заказы от всех',clr:'убрать всех',msg:'сообщение…',adm:'🛠 Админ · '}};
+let LG=localStorage.getItem('dl')||(navigator.language||'en').slice(0,2);if(!UI[LG])LG='en';
+const T=UI[LG];
+const $=id=>document.getElementById(id),MAX=10,NAMES=['Ali','Ayse','Mehmet','Zeynep','John','Maria','Can','Elif','Sara','Omer','Leyla','Murat'],SURNAMES=['Demir','Kaya','Yilmaz','Smith','Brown','Ivanov','Petrova','Arslan','Aydin','Miller'],
+TOWNS=['Girne','Lefkosa','Gazimagusa','Iskele','Guzelyurt'],CARDS=['Happy birthday!','I love you','Congratulations','Get well soon','Thank you so much'];
+let adminClearedAt=0;
+let admin='',since=0,prods=[],users=[],oid='1';
+const R=a=>a[Math.floor(Math.random()*a.length)],digits=s=>(s||'').replace(/\D/g,''),esc=s=>s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const fmt=s=>esc(s||'').replace(/(https?:\/\/[^\s]+)/g,'<a href="$1" target="_blank">$1</a>').replace(/\*([^*\n]+)\*/g,'<b>$1</b>');
+const phone=()=>'9053'+Math.floor(1e7+Math.random()*9e7);
+function bottom(box){if(box)requestAnimationFrame(()=>{if(box.isConnected)box.scrollTop=box.scrollHeight})}
+function bubble(box,cls,html){const stick=cls=='me'||box.scrollHeight-box.scrollTop-box.clientHeight<80;const d=document.createElement('div');d.className='b '+cls;d.innerHTML=html;box.append(d);if(box===adminBox){const rows=box.querySelectorAll(':scope>.b');if(stick&&rows.length>20){adminOlder.push(rows[0].outerHTML);rows[0].remove()}}d.querySelectorAll('img,audio,video').forEach(m=>{m.addEventListener('load',()=>stick&&bottom(box),{once:true});m.addEventListener('loadedmetadata',()=>stick&&bottom(box),{once:true})});if(stick)bottom(box);persist()}
+async function post(from,name,text){const f=new FormData();f.append('from',from);f.append('name',name);f.append('text',text);await fetch(BASE+'/message',{method:'POST',body:f})}
+function head(title,cls){const P=title.split(' · '),adm=cls=='adm',nm=adm?(P[0].replace(/^[^\p{L}]+/u,'').trim()||'Admin'):P[0],sub=adm?digits(title):(P[1]||''),tag=adm?'':(P[2]||''),ini=nm.split(/\s+/).slice(0,2).map(x=>x[0]||'').join('').toUpperCase();return `<i class="av">${ini}</i><div class="who"><b>${nm}</b><small>${sub}</small></div>${tag?`<em class="lg">${tag}</em>`:''}`}
+function win(title,cls,onsend,x,onfile){const w=document.createElement('div');w.className='w '+cls;
+ w.innerHTML=`<div class="t ${cls?'a':''}">${head(title,cls)}<span></span></div><div class="c"></div><div class="s"><input type="file" hidden><button class="at" title="${T.attach}" aria-label="${T.attach}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21.4 11.1-8.9 8.9a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg></button><button class="mic" title="${T.voice}" aria-label="${T.voice}"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3.5M8.5 21.5h7"/></svg></button><input type="text" placeholder="${T.msg}"><button class="go" aria-label="Send"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></div>`;
+ const c=w.querySelector('.c'),i=w.querySelector('input[type=text]'),fi=w.querySelector('input[type=file]'),mic=w.querySelector('.mic'),go=()=>{const t=i.value.trim();if(t){i.value='';onsend(t)}};
+ w.querySelector('.go').onclick=go;i.onkeydown=e=>{if(e.key=='Enter')go()};
+ w.querySelector('.at').onclick=()=>fi.click();fi.onchange=()=>{for(const f of fi.files)onfile(f,0);fi.value=''};
+ let rec=null,chunks=[],t0=0;mic.onclick=async()=>{if(rec){rec.stop();return}
+  try{const st=await navigator.mediaDevices.getUserMedia({audio:true});rec=new MediaRecorder(st);chunks=[];t0=Date.now();rec.ondataavailable=e=>chunks.push(e.data);
+   rec.onstop=()=>{st.getTracks().forEach(k=>k.stop());mic.classList.remove('rec');const d=(Date.now()-t0)/1000,f=new File([new Blob(chunks,{type:rec.mimeType||'audio/webm'})],'voice.webm',{type:rec.mimeType||'audio/webm'});rec=null;onfile(f,d)};
+   rec.start();mic.classList.add('rec')}catch(e){alert(T.nomic)}};
+ if(x){const b=document.createElement('button');b.textContent='✕';b.onclick=()=>{x();w.remove()};w.querySelector('.t span').append(b)}
+ (H.classList.contains('simfs')?$('fsr'):$('grid')).append(w);return c}
+async function postFile(from,name,f,dur){const fd=new FormData();fd.append('from',from);fd.append('name',name);fd.append('file',f,f.name);fd.append('duration',dur||0);await fetch(BASE+'/message',{method:'POST',body:fd})}
+// a file sent by us: shown right away (photo, voice player, or a file chip that opens the viewer)
+function mineFile(box,f){const u=URL.createObjectURL(f);bubble(box,'me',attHtml(f.type.startsWith('image')?'image':f.type.startsWith('audio')||f.type=='video/webm'?'audio':'document',u,f.name,f.type))}
+// the viewer: PDF in a viewer, photos large, audio with a player; the download stays a button
+function attHtml(kind,url,name,mime){const q=(x)=>x.replace(/'/g,"\\'");name=esc(name||'file');
+ if(kind=='image')return `<img src="${url}" alt="${name}" onclick="openV('${q(url)}','${q(name)}','${mime||'image'}')">`;
+ if(kind=='audio')return `<audio controls src="${url}"></audio>`;
+ return `<span class="fa" onclick="openV('${q(url)}','${q(name)}','${mime||''}')"><svg viewBox="0 0 24 24" aria-hidden="true" style="width:14px;height:14px;vertical-align:-2px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round"><path d="M6 2.5h8l4 4V21.5H6zM14 2.5v4h4"/></svg> ${name}</span>`}
+function openV(url,name,mime){const isImg=/^image/.test(mime)||/\.(png|jpe?g|webp|gif)(\?|$)/i.test(name),isAud=/^audio/.test(mime)||/\.(webm|ogg|mp3|m4a|wav)$/i.test(name),isPdf=/pdf/.test(mime)||/\.pdf$/i.test(name),vu=url.includes('/download/')?url.replace('/download/','/view/'):url;
+ $('vt').textContent=name;$('vd').href=url;$('vd').download=name;$('vn').href=vu;
+ $('vc').innerHTML=isImg?`<img src="${vu}">`:isAud?`<audio controls autoplay src="${vu}"></audio>`:isPdf?`<iframe src="${vu}"></iframe>`:`<span>${T.nopreview}</span>`;$('viewer').classList.add('on')}
+$('vx').onclick=()=>{$('viewer').classList.remove('on');$('vc').innerHTML=''};$('viewer').onclick=e=>{if(e.target.id=='viewer')$('vx').click()};document.addEventListener('keydown',e=>{if(e.key=='Escape')$('vx').click()});
+function say(u,t){bubble(u.box,'me',fmt(t));return post(u.num,u.name,t)}
+function mkUser(num,name,lang){const u={num,name,lang};
+ u.box=win(`${name} · ${num} · ${lang.toUpperCase()}`,'',t=>say(u,t),()=>{users=users.filter(x=>x!==u);upd()},(f,d)=>{mineFile(u.box,f);postFile(u.num,u.name,f,d)});users.push(u);upd();return u}
+function addUser(){if(users.length>=MAX)return;let used=[];try{used=JSON.parse(localStorage.getItem('simused')||'[]')}catch(e){}const nums=new Set([...used.map(x=>x.num),digits(admin)]),names=new Set(used.map(x=>x.name));let num,name;do{num=phone()}while(nums.has(num)||users.some(u=>u.num===num));do{name=R(NAMES)+' '+R(SURNAMES)}while(names.has(name)||users.some(u=>u.name===name));used.push({num,name});localStorage.setItem('simused',JSON.stringify(used));return mkUser(num,name,R(['en','tr','ru']))}
+function upd(){persist();$('cnt').textContent=`(${users.length}/${MAX})`;$('add').disabled=$('addall').disabled=users.length>=MAX}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+// the simulated customers write in English, Turkish and Russian
+const LX={
+ en:{hello:['hi','hello','hey there','good morning'],generic:['red roses','white roses','an orchid','a teddy bear','some chocolates','a plant','a daisy bouquet','lilies','a fruit basket','a wreath','a birthday bouquet','something romantic','a cheap bouquet','a big bouquet'],cards:['Happy birthday!','I love you','Congratulations','Get well soon','Thank you so much'],kinds:['roses bouquet','plant','chocolate','teddy bear'],
+  want:x=>`I'd like ${x}`,have:x=>`do you have ${x}?`,price:x=>`how much is ${x}?`,cheap:k=>`what is the cheapest ${k}?`,under:n=>`show me something under ${n} TL`,take:x=>`I'll take ${x}`,two:(x,y)=>`I want ${x} and ${y}`,avail:x=>`is ${x} available now?`,
+  hours:'what are your opening hours?',where:'where are you located?',fam:'do you deliver to Famagusta and how much?',photo:'can I see a photo?',ok:"ok I'll take one",card:'can I pay by card?',thanks:'thank you!',exp:'what is the most expensive thing you sell?',takeCheap:"I'll take the cheapest one",photoPl:'send me a photo please',days:['tomorrow','today','the day after tomorrow'],
+  full:(d,t,town,st,n,rec,ph,cd,nm)=>`delivery ${d} at ${t} to ${town}, ${st} street ${n}. For ${rec}, her phone is ${ph}. Card: ${cd}. My name is ${nm}`},
+ tr:{hello:['merhaba','selam','günaydın','iyi günler'],generic:['kırmızı güller','beyaz güller','bir orkide','bir ayıcık','biraz çikolata','bir bitki','papatya buketi','lilyum','meyve sepeti','bir çelenk','doğum günü buketi','romantik bir şey','ucuz bir buket','büyük bir buket'],cards:['İyi ki doğdun!','Seni seviyorum','Tebrikler','Geçmiş olsun','Çok teşekkürler'],kinds:['gül buketi','bitki','çikolata','ayıcık'],
+  want:x=>`${x} istiyorum`,have:x=>`${x} var mı?`,price:x=>`${x} ne kadar?`,cheap:k=>`en ucuz ${k} hangisi?`,under:n=>`${n} TL altında bir şey gösterir misiniz`,take:x=>`${x} alacağım`,two:(x,y)=>`${x} ve ${y} istiyorum`,avail:x=>`${x} şu an var mı?`,
+  hours:'çalışma saatleriniz nedir?',where:'neredesiniz?',fam:"Gazimağusa'ya teslimat var mı, ücreti ne kadar?",photo:'fotoğrafını görebilir miyim?',ok:'tamam bir tane alayım',card:'kartla ödeyebilir miyim?',thanks:'teşekkürler!',exp:'en pahalı ürününüz hangisi?',takeCheap:'en ucuzunu alacağım',photoPl:'bir fotoğraf gönderir misiniz',days:['yarın','bugün','öbür gün'],
+  full:(d,t,town,st,n,rec,ph,cd,nm)=>`${d} saat ${t} ${town}, ${st} sokak ${n} adresine teslimat. Alıcı ${rec}, telefonu ${ph}. Kart notu: ${cd}. Adım ${nm}`},
+ ru:{hello:['привет','здравствуйте','добрый день','добрый вечер'],generic:['красные розы','белые розы','орхидею','плюшевого мишку','шоколад','растение','букет ромашек','лилии','фруктовую корзину','венок','букет на день рождения','что-нибудь романтичное','недорогой букет','большой букет'],cards:['С днём рождения!','Люблю тебя','Поздравляю','Выздоравливай','Большое спасибо'],kinds:['букет роз','растение','шоколад','мишку'],
+  want:x=>`Хочу ${x}`,have:x=>`у вас есть ${x}?`,price:x=>`сколько стоит ${x}?`,cheap:k=>`какой самый дешёвый ${k}?`,under:n=>`покажите что-нибудь до ${n} TL`,take:x=>`Беру ${x}`,two:(x,y)=>`Хочу ${x} и ${y}`,avail:x=>`${x} сейчас есть?`,
+  hours:'какой у вас график работы?',where:'где вы находитесь?',fam:'вы доставляете в Фамагусту и сколько это стоит?',photo:'можно посмотреть фото?',ok:'хорошо, возьму один',card:'можно оплатить картой?',thanks:'спасибо!',exp:'что у вас самое дорогое?',takeCheap:'возьму самый дешёвый',photoPl:'пришлите фото, пожалуйста',days:['завтра','сегодня','послезавтра'],
+  full:(d,t,town,st,n,rec,ph,cd,nm)=>`доставка ${d} в ${t} в ${town}, улица ${st} ${n}. Для ${rec}, её телефон ${ph}. Открытка: ${cd}. Меня зовут ${nm}`}};
+const pick=u=>Math.random()<.5&&prods.length?R(prods).name:R(LX[u.lang].generic); // half the time a real catalog name, half the time a loose description
+function fullMsg(u){const l=LX[u.lang];return l.full(R(l.days),R(['14:00','16:00','18:00']),R(TOWNS),R(['Lemon','Rose','Main']),1+Math.floor(Math.random()*40),R(NAMES),'0533'+Math.floor(1e6+Math.random()*9e6),R(l.cards),u.name)}
+function script(u){const l=LX[u.lang],x=pick(u),y=pick(u),full=fullMsg(u);
+ return R([[R(l.hello),l.want(x),full],[l.have(x),l.photo,l.ok,full],[l.two(x,y),l.card,full],[R(l.hello),l.cheap(R(l.kinds)),l.takeCheap,full],[l.avail(x),l.photoPl,l.card]])}
+// 3-round random chat: every customer sends three different random things (in the customer's own language), waiting for the reply before the next round
+function rounds(u){const l=LX[u.lang],x=pick(u),full=fullMsg(u);
+ return [R(l.hello),R([l.have(x),l.want(x),l.price(x),l.cheap(R(l.kinds)),l.hours,l.where,l.fam,l.under(R([1500,2500,4000]))]),R([l.take(pick(u)),l.card,l.photo,l.thanks,full,l.exp])]}
+async function run3(u){for(const t of rounds(u)){const n=u.replies||0;say(u,t);const t0=Date.now();while((u.replies||0)<=n&&Date.now()-t0<25000)await sleep(300);await sleep(600+Math.random()*1500)}}
+function clearAll(){users=[];document.querySelectorAll('.w:not(.adm)').forEach(w=>w.remove());upd()}
+function modeUi(){const sim=$('mode').value=='sim';$('nsel').style.display=sim?'':'none';$('go').textContent=sim?T.go:T.chat}
+$('mode').onchange=modeUi;modeUi();
+$('go').onclick=async()=>{if(!users.length)addUser();const b=$('go'),active=[...users];b.disabled=true;try{await Promise.all(active.map(run3))}finally{b.disabled=false}};
+async function run(u){for(const t of script(u)){await sleep(300+Math.random()*2500);say(u,t)}}
+$('add').onclick=addUser;$('addall').onclick=()=>{while(users.length<MAX)addUser()};
+$('clr').onclick=()=>{users=[];document.querySelectorAll('.w:not(.adm)').forEach(w=>w.remove());upd()};
+$('rand').onclick=()=>{if(!users.length)$('addall').click();users.forEach(run)};
+function show(e){const to=digits(e.to);const html=(e.file?attHtml(e.kind=='image'?'image':e.kind=='audio'?'audio':'document',BASE+'/download/'+e.file,e.file.replace(/^\d+_/,''),''):'')+fmt(e.body);
+ const mo=(e.body||'').match(/Order #(\d+)/);if(mo)oid=mo[1];
+ const u=users.find(u=>u.num==to);if(u){bubble(u.box,'bot',html);u.replies=(u.replies||0)+1}
+ if(to==digits(admin)&&e.id>adminClearedAt)bubble(adminBox,'bot',html);
+ const d=document.createElement('div');d.className=to==digits(admin)?'al':'';d.textContent=`${e.ts} → ${to==digits(admin)?'ADMIN':(users.find(u=>u.num==to)||{name:to}).name||to}  ${(e.body||'').slice(0,200)}${e.file?' [file]':''}`;$('log').append(d);$('log').scrollTop=1e9}
+// ---- the display is always the FULL one: the whole simulation fills the page, the admin pinned on the left and the customers on the right (no switch, no browser full screen).
+// The blurred "Simulation Mode" loading screen plays every time the simulation is opened (each click on it in the dashboard reloads this page).
+const H=document.documentElement;
+function fx(){const f=$('simfx');$('fxt').innerHTML=[...T.simmode].map((c,i)=>`<span style="animation-delay:${i*50}ms">${c==' '?'&nbsp;':esc(c)}</span>`).join('');f.className='on';clearTimeout(f._t);f._t=setTimeout(()=>{f.className='on out';setTimeout(()=>{f.className=''},520)},1900)}
+const adminWin=()=>adminBox&&adminBox.parentElement;
+function dock(){const a=adminWin();if(a)$('fsl').append(a);users.forEach(u=>$('fsr').append(u.box.parentElement))}
+// the customers' windows share the whole area equally: the grid (columns x rows) whose cells are closest to a tall chat window
+function layout(){const r=$('fsr'),n=r.children.length;if(!n)return;const W=r.clientWidth,Hh=r.clientHeight,g=12;let best=1,bs=1e9;
+ for(let c=1;c<=n;c++){const rows=Math.ceil(n/c),cw=(W-g*(c-1))/c,ch=(Hh-g*(rows-1))/rows,sc=Math.abs(Math.log(cw/ch/0.85))+(c*rows-n)*0.35;if(sc<bs){bs=sc;best=c}}
+ const rows=Math.ceil(n/best);r.style.gridTemplateColumns=`repeat(${best},1fr)`;r.style.gridTemplateRows=`repeat(${rows},1fr)`}
+new MutationObserver(layout).observe($('fsr'),{childList:true});new ResizeObserver(layout).observe($('fsr'));
+function openDisplay(){fx();setTimeout(()=>{H.classList.add('simfs');dock()},380)}
+// inside the dashboard this page covers everything: its own header carries the way back (and, for the test copy, reset / stop)
+const EMB=window.parent!==window,cmd=c=>window.parent.postMessage({simcmd:c},location.origin);
+if(EMB){$('bk').style.display='';$('bk').textContent=T.back;$('bk').onclick=()=>cmd('back');if(BASE){$('sbr2').style.display=$('sbs2').style.display='';$('sbr2').textContent=T.sbreset;$('sbs2').textContent=T.clr;$('sbr2').onclick=()=>cmd('reset');$('sbs2').onclick=clearAll}}
+// ---- the chats stay until the person logs out of the website (the dashboard's logout clears this key): they survive reloads, tab changes and a closed browser
+const SKEY='simstate';let _pt=null,adminOlder=[],adminLoading=false;
+function persist(){clearTimeout(_pt);_pt=setTimeout(()=>{try{localStorage.setItem(SKEY,JSON.stringify({since,oid,adminClearedAt,u:users.map(u=>({num:u.num,name:u.name,lang:u.lang,html:u.box.innerHTML})),a:adminBox?adminBox.innerHTML:'',ao:adminOlder}))}catch(e){}},300)}
+async function loadAdminOlder(){if(adminLoading||!adminOlder.length||!adminBox)return;adminLoading=true;const h0=adminBox.scrollHeight,mark=document.createElement('div');mark.className='mut';mark.textContent=({en:'Loading older messages…',tr:'Eski mesajlar yükleniyor…',ru:'Загрузка старых сообщений…'})[LG];adminBox.prepend(mark);await new Promise(r=>setTimeout(r,180));mark.remove();const batch=adminOlder.splice(-20);adminBox.insertAdjacentHTML('afterbegin',batch.join(''));adminBox.scrollTop=adminBox.scrollHeight-h0;adminLoading=false;persist();setTimeout(()=>adminBox.onscroll&&adminBox.onscroll())}
+const noBlob=h=>h.replace(/<img[^>]*src="blob:[^>]*>/g,'<span class="mut">[image]</span>').replace(/<audio[^>]*src="blob:[^>]*><\/audio>/g,'<span class="mut">[voice]</span>').replace(/<span class="fa"[^>]*>[^<]*<\/span>/g,m=>m.includes('blob:')?'<span class="mut">[file]</span>':m);  // a file we sent from this browser has a temporary address that does not survive a reload
+function restore(){let r=null;try{r=JSON.parse(localStorage.getItem(SKEY)||'null')}catch(e){}if(!r)return null;since=r.since||0;adminClearedAt=r.adminClearedAt||0;oid=r.oid||'1';let used=[];try{used=JSON.parse(localStorage.getItem('simused')||'[]')}catch(e){}const ids=new Set(used.map(x=>x.num));for(const x of r.u||[]){if(!ids.has(x.num)){used.push({num:x.num,name:x.name});ids.add(x.num)}const u=mkUser(x.num,x.name,x.lang);u.box.innerHTML=noBlob(x.html);bottom(u.box)}localStorage.setItem('simused',JSON.stringify(used));return r}
+function applyLang(){document.documentElement.lang=LG;for(const k of ['ttl','nv1','nv2','nv3','om1','om2'])$(k).textContent=T[k];$('add').textContent=T.add;$('addall').textContent=T.addall;$('rand').textContent=T.rand;$('clr').textContent=T.clr;
+ [...$('nsel').options].forEach(o=>o.textContent=T.n(+o.value));document.title=T.ttl;modeUi()}
+applyLang();
+let adminBox;const RS=restore();
+Promise.all([fetch(BASE+'/config').then(r=>r.json()),fetch(BASE+'/sim/products').then(r=>r.json())]).then(([c,p])=>{admin=c.admin;prods=p;
+ adminBox=win(T.adm+admin,'adm',t=>{bubble(adminBox,'me',fmt(t));post(admin,'Admin',t)},null,(f,d)=>{mineFile(adminBox,f);postFile(admin,'Admin',f,d)});if(RS&&RS.a){const tmp=document.createElement('div');tmp.innerHTML=noBlob(RS.a);adminOlder=Array.isArray(RS.ao)?RS.ao:[];const rows=[...tmp.children];adminOlder=[...adminOlder,...rows.slice(0,-20).map(x=>x.outerHTML)];adminBox.replaceChildren(...rows.slice(-20));bottom(adminBox)}adminBox.onscroll=()=>{if(adminBox.scrollTop<60)loadAdminOlder()};requestAnimationFrame(()=>adminBox.onscroll())
+ const clear=document.createElement('button');clear.textContent=({en:'Clear chat',tr:'Sohbeti temizle',ru:'Очистить чат'})[LG];
+ clear.onclick=async()=>{clear.disabled=true;try{const r=await fetch(BASE+'/sim/admin/clear',{method:'POST'});if(!r.ok)throw new Error((await r.json()).detail);adminClearedAt=(await r.json()).since;adminBox.innerHTML='';adminOlder=[];persist()}catch(e){alert(e.message)}finally{clear.disabled=false}};
+ adminWin().querySelector('.t span').append(clear);
+  adminWin().parentElement.prepend(adminWin());upd();openDisplay();
+  if(RS)fetch(BASE+'/feed?since=0').then(r=>r.json()).then(l=>{if(l.length<since){since=l.length;adminClearedAt=0}}).catch(()=>{})});
+setInterval(async()=>{if(document.hidden)return;try{const r=await fetch(BASE+'/feed?since='+since);if(!r.ok)return;(await r.json()).forEach(e=>{show(e);since=e.id});persist()}catch(e){}},2500);
+</script></body></html>
