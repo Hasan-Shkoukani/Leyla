@@ -431,7 +431,7 @@ def test_full_order_lifecycle_form_first_confirmation_payment_receipt_final_conf
     assert row["status"] == "awaiting_payment" and row["delivery_fee"] == "0" and row["payable"] == "1800" and not core.audit_orders()
     pay = sent(CUST)[-1]["body"]
     assert "2 x Teddy Bear 40cm with Pink Roses - 1,800 TL" in pay and "free" in pay and "TOTAL TO PAY: 1,800 TL" in pay
-    assert "Özcan EFEKAL" in pay and "AKBANK" in pay and "TR89 0004 6006 1288 8000 2245" in pay and "\n03\n" in pay and "Please also share the receipt with me" in pay
+    assert "Example Holder" in pay and "Example Bank" in pay and "TR00 0000 0000 0000 0000 0000" in pay and "\n03\n" in pay and "Please also share the receipt with me" in pay
     assert core.orders()[0]["status"] != "confirmed" and stats().get("orders_confirmed", "0") == "0"  # not final yet
     # the customer sends the receipt: forwarded to the owner as it is, no model involved
     n = len(core.FEED)
@@ -3325,7 +3325,7 @@ def test_the_opening_and_closing_lines_of_the_payment_message_are_worded_by_the_
     agent.LLM = fake('{"intro": "Great news Hasan, the team approved order #1, here it is 🌸", "outro": "When you have paid, just send me a photo of the transfer and we will wrap it up 💐"}')
     agent.reply(CUST, agent.payment_message(row))
     body = sent(CUST)[-1]["body"]
-    assert body.startswith("Great news") and body.rstrip().endswith("wrap it up 💐") and core.fmt_tl(row["payable"]) in body and "TR89" in body or "IBAN" in body or "AKBANK" in body
+    assert body.startswith("Great news") and body.rstrip().endswith("wrap it up 💐") and core.fmt_tl(row["payable"]) in body and "TR89" in body or "IBAN" in body or "Example Bank" in body
     for bad in ('{"intro": "Pay only 1,000 TL, order #1", "outro": "Send the receipt please"}', '{"intro": "Order #1 is approved", "outro": "Pay at https://x.example now please"}', 'not json'):
         agent.LLM = fake(bad)
         agent.reply(CUST, agent.payment_message(row))
@@ -4989,7 +4989,7 @@ def test_a_photo_receipt_that_matches_is_forwarded_with_a_valid_looking_note():
 
 def test_pdf_and_docx_receipts_are_read():
     import io, zipfile
-    xml = "<w:document><w:p><w:r><w:t>Tutar 1,800 TL IBAN TR89 0004 6006 1288 8000 2245</w:t></w:r></w:p></w:document>"
+    xml = "<w:document><w:p><w:r><w:t>Tutar 1,800 TL IBAN TR00 0000 0000 0000 0000 0000</w:t></w:r></w:p></w:document>"
     buf = io.BytesIO(); z = zipfile.ZipFile(buf, "w"); z.writestr("word/document.xml", xml); z.close()
     txt, why = receipt.extract_text("document", buf.getvalue(), "dekont.docx")
     assert "1,800 TL" in txt and not why

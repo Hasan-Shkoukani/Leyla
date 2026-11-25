@@ -1,7 +1,7 @@
 {
- "holder": "Özcan EFEKAL",
- "bank": "AKBANK",
- "iban": "TR89 0004 6006 1288 8000 2245",
+ "holder": "Example Holder",
+ "bank": "Example Bank",
+ "iban": "TR00 0000 0000 0000 0000 0000",
  "extra": "03",
  "receipt_line": {
   "tr": "Dekontu da benimle paylaşırmısınız lütfen",
