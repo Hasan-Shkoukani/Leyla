@@ -1,7 +1,7 @@
 """FastAPI: WhatsApp Meta Cloud webhook + mock-mode test UI. Run: uvicorn app:app --port 8000"""
 import asyncio
 import json, time
-import os
+import os, signal, sys
 import hashlib, hmac
 from pathlib import Path
 
@@ -30,7 +30,7 @@ def _meta_test_allowed(to):
         raise RuntimeError("META_TEST_MODE blocks WhatsApp recipients outside META_TEST_RECIPIENTS")
 def is_mock():
     """Test mode (the chat test pages are on): no real channel is connected."""
-    return not (cfg("WAHA_API_KEY") or (cfg("WHATSAPP_TOKEN") and cfg("PHONE_NUMBER_ID")) or cfg("TELEGRAM_TOKEN"))
+    return not (cfg("WHATSAPP_TOKEN") and cfg("PHONE_NUMBER_ID"))
 
 
 class WhatsApp:
@@ -80,6 +80,32 @@ class WhatsApp:
         return r.content, meta.get("mime_type", "")
 
 
+def request_refresh_restart():
+    """Ask Uvicorn to drain its requests and run the shutdown hook."""
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
+@app.on_event("shutdown")
+def restart_after_refresh():
+    dashboard._sb_stop()  # Close the owned simulation before exec replaces its parent.
+    if core.kget("refresh_restart") == "ready":
+        # Uvicorn closes listening sockets and drains requests before lifespan shutdown.
+        os.execv(sys.executable, [sys.executable, *sys.orig_argv[1:]])
+
+
+def resume_pending_messages():
+    completed = core.kget("refresh_restart") == "ready"
+    if core.kget("maintenance") == "1":
+        core.kset("maintenance", "0")
+        core.kset("refresh_restart", "")
+        agent.end_maintenance()
+        core.tell_admins("The nightly product and photo-index update is complete. The server restarted; queued customer messages are resuming." if completed else "The product update was interrupted by a restart. Queued customer messages are resuming; ask me to update the products again.")
+    elif core.kget("agent_stopped") != "1":
+        agent.flush_inbox()
+    else:
+        core.atomic_write(core.P("inbox.json"), json.dumps([{**x, "live": False} for x in core.inbox()]))
+
+
 @app.on_event("startup")
 async def _pool():  # each chat turn waits on OpenAI most of the time, so many can run at once; the default pool is only cpu+4 threads
     from concurrent.futures import ThreadPoolExecutor
@@ -89,16 +115,13 @@ async def _pool():  # each chat turn waits on OpenAI most of the time, so many c
 
 @app.on_event("startup")
 def _startup():
-    if cfg("WAHA_API_KEY"):
-        from waha import Waha
-        core.TRANSPORT = Waha()
-    elif cfg("WHATSAPP_TOKEN") and cfg("PHONE_NUMBER_ID"):
+    if cfg("WHATSAPP_TOKEN") and cfg("PHONE_NUMBER_ID"):
         core.TRANSPORT = WhatsApp()
     else:
         core.TRANSPORT = None
     if os.environ.get("SANDBOX_PRELOAD", "1") != "0" and not is_mock():  # live server only: the simulation copy warms up now, so its dashboard tab opens at once
         dashboard.sandbox_preload()
-    if os.environ.get("WA_CHECK", "1") != "0" and cfg("WHATSAPP_TOKEN") and not cfg("WAHA_API_KEY"):  # an expired WhatsApp token is noticed within minutes (and every 6 hours), not days later
+    if os.environ.get("WA_CHECK", "1") != "0" and cfg("WHATSAPP_TOKEN"):  # an expired WhatsApp token is noticed within minutes
         import threading, time as _t
 
         def _wa_loop():
@@ -109,14 +132,14 @@ def _startup():
                     core.log(f"whatsapp check failed: {e!r}")
                 _t.sleep(6 * 3600)
         threading.Thread(target=_wa_loop, daemon=True, name="wa-check").start()
-    if os.environ.get("RESEND_CHECK", "1") != "0":  # a sales order that never reached an owner (a restart, a channel that was down) is sent again, once
+    if os.environ.get("RESEND_CHECK", "1") != "0":  # an order request that never reached an owner (a restart, a channel that was down) is sent again, once
         import threading, time as _t3
         def _resend_loop():
             while True:
                 try:
                     done = agent.resend_unnotified()
                     if done:
-                        core.log(f"sales orders sent after a delay: {done}")
+                        core.log(f"order requests sent after a delay: {done}")
                 except Exception as e:
                     core.log(f"resend check failed: {e!r}")
                 _t3.sleep(60)
@@ -138,31 +161,7 @@ def _startup():
     if msg:
         core.log(msg)
         core.tell_admins("⚠️ " + msg)
-    if cfg("TELEGRAM_TOKEN"):
-        import tgbot
-        core.TG = tgbot.Telegram(cfg("TELEGRAM_TOKEN"))
-        core.TG.on_sent = core.remember_msg
-        if cfg("PUBLIC_URL") and cfg("TELEGRAM_SECRET"):  # tell Telegram where to deliver messages (done again at every start: the ngrok address may have changed)
-            try:
-                core.TG.set_webhook(cfg("PUBLIC_URL").rstrip("/") + "/telegram/webhook", cfg("TELEGRAM_SECRET"))
-            except Exception as e:
-                core.log(f"telegram webhook not set: {e!r}")
-    for u in core.tgq_all():  # Telegram messages that were received but not yet handed to the agent when the server stopped
-        if agent.LOOP:
-            agent.LOOP.call_soon_threadsafe(_tg_spawn, u)
-    if core.kget("maintenance") == "1":  # the app died in the middle of a refresh: reopen and re-text the customers who wrote meanwhile
-        core.kset("maintenance", "0")
-        agent.end_maintenance()
-        core.tell_admins("The product update was interrupted by a restart. Ask me to update the products again.")  # (never lets a failing message stop the server from starting)
-    elif core.kget("agent_stopped") != "1":  # messages that arrived before a restart and were not answered yet (and the ones kept during an update): answered now
-        agent.flush_inbox()
-    else:  # stopped by the owner: what was in flight waits like the rest for his decision
-        core.atomic_write(core.P("inbox.json"), json.dumps([{**x, "live": False} for x in core.inbox()]))
-    if not is_mock() and os.environ.get("DAILY_REFRESH", "1") != "0":  # re-scrape the shop (details, new products and every price) every night 02:00-05:00; the owner gets the result
-        import refresh_catalog
-        refresh_catalog.start_daily(core.tell_admins, agent.end_maintenance)
-        if os.environ.get("WATCH_SITE", "1") != "0":  # 'event listener': new / changed / removed products are noticed without a full update
-            refresh_catalog.start_watcher(core.tell_admins)
+    resume_pending_messages()
     def nightly():  # one backup a day, AFTER the nightly product update (02:00-05:00) has finished, so it holds the new product list and prices; at 05:00 it goes ahead whatever happened
         import time as _t
         import refresh_catalog  # imported HERE: the one at startup only runs when the nightly product update is on (DAILY_REFRESH), and a missing name made every round fail
@@ -205,7 +204,7 @@ def _startup():
                         if kind == "opening":
                             agent.send_report("opening")  # the morning reminder as plain text
                         else:
-                            agent.send_report("day")  # the night report: a PDF like the invoices
+                            agent.send_report("day")  # the night report: a PDF like the receipts
                             for rep, due_ in (("week", n.weekday() == 6), ("month", (n + timedelta(days=1)).month != n.month)):  # Sunday night: the week; the last night of the month: the month
                                 if due_ and not core.kget(f"summary:{n:%Y-%m-%d}:{rep}"):
                                     core.kset(f"summary:{n:%Y-%m-%d}:{rep}", "1")
@@ -295,162 +294,6 @@ async def receive(request: Request):
     return {"ok": True}
 
 
-# Local WAHA test connection.
-WAHA_SEEN = set()  # shortcut: dedupe resets on restart, persist ids before using this in production.
-
-
-@app.post("/waha/webhook")
-async def waha_webhook(request: Request):
-    secret = cfg("WAHA_WEBHOOK_SECRET")
-    if not cfg("WAHA_API_KEY") or not secret or not hmac.compare_digest(request.headers.get("X-Waha-Secret", ""), secret):
-        raise HTTPException(403, "bad secret")
-    data = await request.json()
-    if not isinstance(data, dict):
-        raise HTTPException(400, "invalid event")
-    if data.get("event") != "message" or data.get("session") != "default":
-        return {"ok": True}
-    m = data.get("payload")
-    if not isinstance(m, dict):
-        raise HTTPException(400, "invalid message")
-    if m.get("fromMe") is not False:
-        return {"ok": True}
-    chat = m.get("from", "")
-    if isinstance(chat, str) and chat.endswith("@lid"):
-        raw = m.get("_data")
-        info = raw.get("Info") if isinstance(raw, dict) else None
-        chat = info.get("SenderAlt", "") if isinstance(info, dict) else ""
-    if not isinstance(chat, str) or "@" not in chat:
-        return {"ok": True}
-    sender, domain = chat.rsplit("@", 1)
-    sender = sender.split(":", 1)[0]  # WAHA GOWS uses device-qualified JIDs for LID SenderAlt values.
-    if not sender.isdigit() or domain not in ("c.us", "s.whatsapp.net"):
-        return {"ok": True}  # groups and status updates are not customer conversations
-    if cfg("META_TEST_MODE") == "1" and sender not in {x.strip().lstrip("+") for x in cfg("META_TEST_RECIPIENTS").split(",") if x.strip()}:
-        return {"ok": True}
-    mid = m.get("id")
-    if not isinstance(mid, str) or not mid:
-        raise HTTPException(400, "missing id")
-    if mid in WAHA_SEEN:
-        return {"ok": True}
-    text = m.get("body") or ""
-    if not isinstance(text, str):
-        raise HTTPException(400, "invalid text")
-    reply = m.get("replyTo") or {}
-    reply_id = reply.get("id", "") if isinstance(reply, dict) else ""
-    quoted = (reply.get("body") or reply.get("caption") or "") if isinstance(reply, dict) else ""
-    if reply_id and quoted:
-        core.remember_msg(reply_id, quoted)
-    elif reply_id:
-        try:
-            old = await asyncio.to_thread(Waha().get_message, chat, reply_id)
-            core.remember_msg(reply_id, old.get("body") or (old.get("media") or {}).get("caption") or "[attachment]")
-        except Exception as e:  # a quote is still delivered even when WAHA has expired its local message store
-            core.log(f"WAHA quoted message lookup failed: {e!r}")
-    base = {"sender": sender, "name": m.get("_data", {}).get("Info", {}).get("PushName", ""), "reply_to": reply_id}
-    core.remember_msg(mid, text or "[attachment]")
-    if m.get("hasMedia"):
-        media = m.get("media") or {}
-        url = media.get("url") if isinstance(media, dict) else None
-        if not url:
-            raise HTTPException(503, "media not downloaded by WAHA")
-        from waha import Waha
-        body, mime = await asyncio.to_thread(Waha().download, url)
-        mime = media.get("mimetype") or mime
-        kind = "image" if mime.startswith("image/") else "audio" if mime.startswith("audio/") else "document"
-        if text:
-            await agent.inbound({**base, "kind": "text", "text": text})
-        await agent.inbound({**base, "kind": kind, "data": body, "mime": mime, "filename": media.get("filename") or "attachment"})
-    elif text:
-        await agent.inbound({**base, "kind": "text", "text": text})
-    if len(WAHA_SEEN) >= 10000:
-        WAHA_SEEN.clear()
-    WAHA_SEEN.add(mid)
-    return {"ok": True}
-
-
-# ------------------------------------------------------------ Telegram
-TG_SEEN = set()  # update ids already handled (Telegram retries a delivery that was not answered quickly)
-
-
-@app.post("/telegram/webhook")
-async def telegram_webhook(request: Request):
-    secret = cfg("TELEGRAM_SECRET")
-    if not secret or not hmac.compare_digest(secret, request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")):
-        raise HTTPException(403, "bad secret")
-    u = await request.json()
-    if u.get("update_id") in TG_SEEN:
-        return {"ok": True}
-    TG_SEEN.add(u.get("update_id"))
-    m = u.get("message")
-    if not m or m.get("chat", {}).get("type") != "private":  # only one-to-one chats; groups are ignored
-        return {"ok": True}
-    await asyncio.to_thread(core.tgq_add, u)  # written down BEFORE Telegram is told "received": it will not send this message again
-    _tg_spawn(u)  # answer Telegram at once and work in the background: a slow reply made Telegram time out and retry
-    return {"ok": True}
-
-
-def _tg_spawn(u):
-    t = asyncio.create_task(_tg_run(u))
-    TG_TASKS.add(t)
-    t.add_done_callback(TG_TASKS.discard)
-
-
-async def _tg_run(u):
-    try:
-        await _tg_handle(u["message"])
-    finally:
-        await asyncio.to_thread(core.tgq_done, u.get("update_id"))
-
-
-TG_TASKS = set()  # keeps the background tasks alive until they finish
-
-
-async def _tg_handle(m):
-    chat = m["chat"]["id"]
-    who = f"tg:{chat}"
-    frm = m.get("from", {})
-    name = " ".join(x for x in (frm.get("first_name"), frm.get("last_name")) if x) or frm.get("username", "")
-    reply = m.get("reply_to_message", {}).get("message_id")
-    base = {"sender": who, "name": name, "username": frm.get("username", ""), "reply_to": f"tg:{chat}:{reply}" if reply else ""}
-    text = m.get("text") or m.get("caption") or ""
-    core.remember_msg(f"tg:{chat}:{m.get('message_id')}", text or ("[photo]" if m.get("photo") else "[voice note]" if m.get("voice") or m.get("audio") else "[file]" if m.get("document") else ""))
-    tg = core.TG
-    try:
-        if text.strip().lower().startswith("/id"):  # lets the owner find his id for ADMIN_TELEGRAM
-            core.send_text(who, f"Your Telegram id: {chat}")
-            return {"ok": True}
-        if tg:
-            asyncio.ensure_future(asyncio.to_thread(tg.typing, chat))  # not awaited: the agent must not wait for Telegram's round trip
-        if text.strip().lower().startswith("/start"):
-            text = "hi"
-        if m.get("photo"):
-            if who in core.admins():  # a photo from an owner is still downloading: a "send it" typed right after must wait for it
-                core.kset("admin_photo_pending", str(time.time()))
-            if text:
-                await agent.inbound({**base, "kind": "text", "text": text})
-            await agent.inbound({**base, "kind": "image", "data": await asyncio.to_thread(tg.download, m["photo"][-1]["file_id"]), "mime": "image/jpeg", "filename": "photo.jpg"})
-        elif m.get("voice") or m.get("audio"):
-            v = m.get("voice") or m.get("audio")
-            await agent.inbound({**base, "kind": "audio", "data": await asyncio.to_thread(tg.download, v["file_id"]), "mime": v.get("mime_type", "audio/ogg"), "filename": "voice.ogg", "duration": v.get("duration", 0)})
-        elif m.get("document"):
-            d = m["document"]
-            if text:
-                await agent.inbound({**base, "kind": "text", "text": text})
-            await agent.inbound({**base, "kind": "document", "data": await asyncio.to_thread(tg.download, d["file_id"]), "mime": d.get("mime_type", ""), "filename": d.get("file_name", "file")})
-        elif m.get("location"):
-            loc = m["location"]
-            await agent.inbound({**base, "kind": "text", "text": f"[shared location] https://www.google.com/maps?q={loc['latitude']},{loc['longitude']}"})
-        elif m.get("contact"):  # the customer shared their phone number with the contact button
-            await agent.inbound({**base, "kind": "text", "text": f"My phone number is +{core.norm(m['contact'].get('phone_number'))}"})
-        elif text:
-            await agent.inbound({**base, "kind": "text", "text": text})
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        core.log(f"telegram webhook error: {e!r}")
-    return {"ok": True}
-
-
 # ------------------------------------------------------------ mock UI (same inbound path as the webhook)
 @app.get("/")
 def index():
@@ -489,7 +332,7 @@ def scenarios():
 @app.get("/config")
 def config():
     a = sorted(core.admins())
-    return {"mock": is_mock(), "admin": a[0] if a else "", "debounce": cfg("DEBOUNCE_SECONDS", "3")}
+    return {"mock": is_mock(), "admin": a[0] if a and is_mock() else "", "debounce": cfg("DEBOUNCE_SECONDS", "0.25")}
 
 
 def need_mock():

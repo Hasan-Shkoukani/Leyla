@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Leyla local catalog",
+  "type": "object",
+  "required": [
+    "products",
+    "business"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "products": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "category",
+          "fixed_price"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "product_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "names": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "en": {
+                "type": "string",
+                "minLength": 1
+              },
+              "tr": {
+                "type": "string",
+                "minLength": 1
+              },
+              "ru": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "category": {
+            "enum": [
+              "roses",
+              "flowers",
+              "daisies",
+              "lilies",
+              "orchids",
+              "plants",
+              "teddy bears",
+              "chocolate",
+              "apology boxes",
+              "fruit baskets",
+              "wreaths"
+            ]
+          },
+          "colors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "fixed_price": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "price": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "currency": {
+            "const": "TRY"
+          },
+          "same_day": {
+            "type": "boolean"
+          },
+          "description": {
+            "type": "string"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "images": {
+            "type": "array",
+            "maxItems": 0,
+            "description": "Leave empty. Photos are discovered locally by product id."
+          }
+        }
+      }
+    },
+    "business": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "company": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "phone": {
+          "type": "string"
+        },
+        "address": {
+          "type": "string"
+        },
+        "hours": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

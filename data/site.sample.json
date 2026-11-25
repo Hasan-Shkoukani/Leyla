@@ -1,0 +1,111 @@
+{
+  "products": [
+    {
+      "id": "demo-red-roses",
+      "product_id": "demo-red-roses",
+      "name": "Red Rose Bouquet",
+      "names": {
+        "en": "Red Rose Bouquet",
+        "tr": "Kırmızı Gül Buketi",
+        "ru": "Букет красных роз"
+      },
+      "category": "roses",
+      "colors": [
+        "red"
+      ],
+      "fixed_price": 800,
+      "price": 800,
+      "currency": "TRY",
+      "same_day": true,
+      "images": [],
+      "description": "Fictional demonstration product. Replace with your own catalog."
+    },
+    {
+      "id": "demo-white-roses",
+      "product_id": "demo-white-roses",
+      "name": "White Rose Bouquet",
+      "names": {
+        "en": "White Rose Bouquet",
+        "tr": "Beyaz Gül Buketi",
+        "ru": "Букет белых роз"
+      },
+      "category": "roses",
+      "colors": [
+        "white"
+      ],
+      "fixed_price": 1100,
+      "price": 1100,
+      "currency": "TRY",
+      "same_day": true,
+      "images": [],
+      "description": "Fictional demonstration product. Replace with your own catalog."
+    },
+    {
+      "id": "demo-teddy",
+      "product_id": "demo-teddy",
+      "name": "Teddy Bear",
+      "names": {
+        "en": "Teddy Bear",
+        "tr": "Peluş Ayı",
+        "ru": "Плюшевый мишка"
+      },
+      "category": "teddy bears",
+      "colors": [
+        "brown"
+      ],
+      "fixed_price": 450,
+      "price": 450,
+      "currency": "TRY",
+      "same_day": true,
+      "images": [],
+      "description": "Fictional demonstration product. Replace with your own catalog."
+    },
+    {
+      "id": "demo-chocolate",
+      "product_id": "demo-chocolate",
+      "name": "Chocolate Box",
+      "names": {
+        "en": "Chocolate Box",
+        "tr": "Çikolata Kutusu",
+        "ru": "Коробка шоколада"
+      },
+      "category": "chocolate",
+      "colors": [
+        "brown"
+      ],
+      "fixed_price": 350,
+      "price": 350,
+      "currency": "TRY",
+      "same_day": true,
+      "images": [],
+      "description": "Fictional demonstration product. Replace with your own catalog."
+    },
+    {
+      "id": "demo-pink-tulips",
+      "product_id": "demo-pink-tulips",
+      "name": "Pink Tulip Bouquet",
+      "names": {
+        "en": "Pink Tulip Bouquet",
+        "tr": "Pembe Lale Buketi",
+        "ru": "Букет розовых тюльпанов"
+      },
+      "category": "flowers",
+      "colors": [
+        "pink"
+      ],
+      "fixed_price": 900,
+      "price": 900,
+      "currency": "TRY",
+      "same_day": true,
+      "images": [],
+      "description": "Fictional demonstration product. Replace with your own catalog."
+    }
+  ],
+  "business": {
+    "name": "Leyla Demo Shop",
+    "company": "Leyla Demo Shop",
+    "email": "hello@example.com",
+    "address": "Configure your shop address",
+    "hours": "08:00-23:00"
+  }
+}

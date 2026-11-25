@@ -7,8 +7,9 @@ Run everything from the repo root (the folder containing `dl/`) on your own mach
 python -m venv .venv && source .venv/bin/activate
 pip install -r dl/requirements.txt
 
-# 1. catalog photos from ../data/raw/site.json (needs fields product_id, images); 1 req/sec
-python -m dl.download_images
+# 1. Put photos in dl/data/catalog/<product_id>/, or import a local folder:
+python -m dl.download_images --source /path/to/photos
+# This command imports local files only; it never downloads images.
 
 # 2. (optional) negatives: put 50+ irrelevant images (other florists, screenshots, random photos) in dl/data/negatives/
 # 3. (optional, later) labeled customer photos: dl/data/customer/<product_id>/*.jpg

@@ -1,5 +1,8 @@
 # secrets
 .env
+.env.*
+!.env.example
+state/
 dash_users.json
 dash_sessions.json
 # customer and order data (runtime state)

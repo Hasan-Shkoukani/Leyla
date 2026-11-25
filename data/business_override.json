@@ -1,15 +1,14 @@
 {
- "email": "efekal3531@gmail.com",
- "maps_url": "https://maps.app.goo.gl/yJm6VsZuhSdtYcSg7",
- "hours": "Every day (Monday to Sunday) 08:00 - 23:00",
- "address": "Girne (Kyrenia), North Cyprus",
- "_drop": [
-  "address2",
-  "delivery",
-  "delivery2",
-  "emails",
-  "hours2",
-  "phone2",
-  "website2"
- ]
+  "email": "efekal3531@gmail.com",
+  "hours": "Every day (Monday to Sunday) 08:00 - 23:00",
+  "address": "Girne (Kyrenia), North Cyprus",
+  "_drop": [
+    "address2",
+    "delivery",
+    "delivery2",
+    "emails",
+    "hours2",
+    "phone2",
+    "website2"
+  ]
 }

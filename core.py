@@ -47,8 +47,8 @@ def norm(n):
 
 
 def admins():
-    """The owners: WhatsApp numbers (ADMIN_NUMBERS) and Telegram chat ids (ADMIN_TELEGRAM), the latter as "tg:<id>"."""
-    return {norm(x) for x in cfg("ADMIN_NUMBERS").split(",") if norm(x)} | {"tg:" + norm(x) for x in cfg("ADMIN_TELEGRAM").split(",") if norm(x)}
+    """The owners' WhatsApp numbers (ADMIN_NUMBERS)."""
+    return {norm(x) for x in cfg("ADMIN_NUMBERS").split(",") if norm(x)}
 
 
 # ---------------------------------------------------------------- sqlite
@@ -122,7 +122,13 @@ def inbox_add(item):
         item["file"] = item["jid"]
     item.setdefault("ts", now().isoformat(timespec="seconds"))
     with INBOX_LOCK:
-        atomic_write(P("inbox.json"), json.dumps(inbox() + [item], ensure_ascii=False))
+        items = inbox()
+        existing = next((x for x in items if x.get("jid") == item["jid"]), None)
+        if existing is not None:
+            existing.update(item)
+        else:
+            items.append(item)
+        atomic_write(P("inbox.json"), json.dumps(items, ensure_ascii=False))
     return item["jid"]
 
 
@@ -373,7 +379,7 @@ def set_custom_photo(cid, jpeg_bytes):
     return f
 
 
-def add_custom(name, price, category, description="", colors="", url="", aliases=()):
+def add_custom(name, price, category, description="", colors="", url="", aliases=(), names=None):
     from build_graph import categorize, colors_of
     d = customs()
     cid = "c-%d" % (max([int(k[2:]) for k in d] or [0]) + 1)
@@ -382,6 +388,9 @@ def add_custom(name, price, category, description="", colors="", url="", aliases
         cat = fold(category).strip()
     cols = [fold(c) for c in re.split(r"[,/]", colors) if c.strip()] or colors_of(name)
     d[cid] = {"name": name.strip(), "price": float(price), "category": cat, "description": description.strip(), "colors": cols, "url": url.strip(), "aliases": list(aliases)}
+    for lg in ("en", "tr", "ru"):  # the official name in each language (LLM-translated once when the owner creates the item), so every record and every admin view uses the same one
+        if (names or {}).get(lg):
+            d[cid]["name_" + lg] = str(names[lg]).strip()
     save_customs(d)
     return cid
 
@@ -436,7 +445,7 @@ def _load(path, mtime, ovr_mtime=0, cus_mtime=0, rem_mtime=0, price_mtime=0):
             n_["old_price"] = n_.get("before")  # the last full scrape's crossed-out price; a price read that parsed the page replaces it below
     for cid, c in customs().items():  # same shape as a scraped product; the price is stored (no page to read it from)
         nodes[cid] = {"id": cid, "type": "product", "custom": True, "name": c["name"], "category": c["category"], "colors": c["colors"], "aliases": c.get("aliases") or [],
-                      "name_en": None, "name_tr": None, "name_ru": None, "urls": [c["url"]] if c.get("url") else [], "url": c.get("url") or None, "image": None,
+                      "name_en": c.get("name_en"), "name_tr": c.get("name_tr"), "name_ru": c.get("name_ru"), "urls": [c["url"]] if c.get("url") else [], "url": c.get("url") or None, "image": None,
                       "description": c.get("description", ""), "fixed_price": c["price"], "old_price": c.get("old_price") or None, "same_day": c.get("same_day", True), "badges": []}
         nodes.setdefault("cat:" + c["category"], {"id": "cat:" + c["category"], "type": "category", "name": c["category"]})
         g["edges"].append({"from": cid, "to": "cat:" + c["category"], "rel": "in_category"})
@@ -466,11 +475,13 @@ def _load(path, mtime, ovr_mtime=0, cus_mtime=0, rem_mtime=0, price_mtime=0):
     for e in g["edges"]:
         by.setdefault((e["rel"], e["to"]), set()).add(e["from"])
     for n_ in nodes.values():
+        if n_.get("type") == "product":
+            n_["url"], n_["urls"] = None, []
         _no_shop_name(n_)
     return nodes, by
 
 
-SHOP_NAME = re.compile(r"north\s*cyprus\s*flowers?|k[iıİ]br[iıİ]s\s*[cç][iıİ][cç]ek\s*sepet\w*", re.I)  # the shop's trade names: the agent is never told them
+SHOP_NAME = re.compile(re.escape(cfg("SHOP_PRIVATE_NAME", "__no_private_shop_name__")), re.I)
 
 
 def _no_shop_name(o):
@@ -527,10 +538,10 @@ def live_prices(products, fresh=False, fallback=False, show=False, age=None):
     an item with no stored price gives None and the caller says the team confirms the price."""
     out = {}
     for p in products:
-        if p.get("custom"):
-            out[p["id"]] = {"price": Decimal(str(p["fixed_price"])), "in_stock": p.get("available") is not False, "ts": time.time()}
-        elif p.get("pinned_price") is not None:
+        if p.get("pinned_price") is not None:  # a price the owner set by hand wins, also on his own items (change_product pins it)
             out[p["id"]] = {"price": Decimal(str(p["pinned_price"])), "in_stock": p.get("available") is not False, "ts": time.time()}
+        elif p.get("custom"):
+            out[p["id"]] = {"price": Decimal(str(p["fixed_price"])), "in_stock": p.get("available") is not False, "ts": time.time()}
         elif p.get("stored_price") is not None:
             out[p["id"]] = {"price": Decimal(str(p["stored_price"])), "in_stock": bool(p.get("stored_in_stock", True)), "ts": p.get("price_ts") or 0}
         else:
@@ -823,7 +834,8 @@ def priced_lines(lines, phone=""):
 
 def display(p, lang=""):
     """Product name in the customer's language (en/tr, both stored in the graph); any other language gets the English name."""
-    return (p.get("name_" + lang) if lang in ("en", "tr", "ru") else None) or p.get("name_en") or p["name"]
+    n = (p.get("name_" + lang) if lang in ("en", "tr", "ru") else None) or p.get("name_en") or p["name"]
+    return re.sub(r"(?<!\.)\.\s*$", "", n)  # the website's own names are sometimes written as a sentence ("Nine red roses in a Paşabahçe vase."): shown without the final full stop
 
 
 def brief(p, lang=""):
@@ -835,8 +847,6 @@ def brief(p, lang=""):
     if p.get("price") is not None:  # only a freshly read price is ever shown
         d["price"] = float(p["price"])
         d["currency"] = "TRY"
-        if p.get("old_price") and p["old_price"] > float(p["price"]):  # a promotional item: `price` is the AFTER price (the one that counts), old_price the BEFORE
-            d["old_price"] = float(p["old_price"])
         if p.get("in_stock") is False:
             d["in_stock"] = False
     if lang == "both":  # the model picks/translates; no language guessing in code
@@ -996,7 +1006,8 @@ def shop_page(topic, lang="en"):
     if key is None:
         return ""
     if key == "blog":  # the list of posts
-        return "\n".join(f"{(info[k].get(lang) or info[k].get('en') or {}).get('title', k)} - https://kibrisciceksepetim.com/{lang}/{k}" for k in info if k.startswith("blog/"))
+        website = cfg("SHOP_BASE_URL", "https://example.com").rstrip("/")
+        return "\n".join(f"{(info[k].get(lang) or info[k].get('en') or {}).get('title', k)} - {website}/{lang}/{k}" for k in info if k.startswith("blog/"))
     pg = info[key].get(lang) or info[key].get("en") or next(iter(info[key].values()))
     return f"{pg.get('title', '')}\n{pg.get('text', '')}"[:3500]
 
@@ -1021,14 +1032,14 @@ def delivered_age(oid):
 # ---------------------------------------------------------------- outbound + feed
 FEED = []  # in-memory log for the test UI (also fed in real mode)
 TRANSPORT = None  # real WhatsApp sender (app.py) or None = mock
-TG = None  # Telegram sender (app.py) or None
+TG = None  # reserved for legacy saved chat ids; no Telegram transport is bundled
 
 
 def _tx(to):
     """The channel a customer / owner is on: Telegram ids start with tg:, everything else is a WhatsApp number."""
     if str(to).startswith("ext:") or str(to).startswith("dashboard"):  # "dashboard" / "dashboard:<user>" = the web page, never a chat number
         return None  # a person without a number on file: nothing can be sent, the owner hands things over himself
-    return TG if str(to).startswith("tg:") else TRANSPORT
+    return None if str(to).startswith("tg:") else TRANSPORT
 
 
 def _alog_file(name):
@@ -1078,10 +1089,15 @@ def alog_clear(name):
             atomic_write(f, "")
 
 
+_FEED_BLANKED = 0
+
+
 def feed(to, kind, body, **kw):
-    if len(FEED) > 20000:  # the test page's log lives in memory too: keep it bounded (ids are positions, so old rows are blanked, not removed)
-        for e in FEED[:5000]:
-            e["body"], e["file"] = "", None
+    global _FEED_BLANKED
+    cut = len(FEED) - 20000  # the test page's log lives in memory too: keep it bounded (ids are positions, so old rows are blanked, not removed)
+    while _FEED_BLANKED < cut:
+        FEED[_FEED_BLANKED]["body"], FEED[_FEED_BLANKED]["file"] = "", None
+        _FEED_BLANKED += 1
     FEED.append({"id": len(FEED) + 1, "ts": now().strftime("%H:%M:%S"), "to": to, "kind": kind, "body": body, **kw})
     if kind in ("text", "document", "image") and (body or kw.get("file")):  # live history is permanent; private dashboard threads are reset daily
         try:
@@ -1125,8 +1141,48 @@ def quoted_text(mid):
         return ""
 
 
+_ADMIN_NAMES = {}
+ADMIN_TRANSLATE = None  # set by agent.py: (text, code) -> text, an LLM translation of what the code wrote in English
+
+
+def admin_names(to, body):
+    """An admin's language mode (/english /turkish /russian, default English): every product name in what he receives is replaced by the OFFICIAL catalog name of that language (stored names, never a translation), so an order of "5 red roses" reads the same as the record."""
+    if to not in admins() and not str(to).startswith("dashboard"):
+        return body
+    code = kget("adminlang:" + to) or "en"
+    prods = [p for p in graph()[0].values() if p.get("type") == "product"]
+    key = (code, len(prods))
+    if key not in _ADMIN_NAMES:
+        m = {}
+        for p in prods:
+            off = p.get("name_" + code) or p.get("name_en") or p["name"]
+            for v in {p.get("name"), p.get("name_en"), p.get("name_tr"), p.get("name_ru")}:
+                if v and len(v) > 5:
+                    m[v] = off
+        _ADMIN_NAMES.clear()
+        _ADMIN_NAMES[key] = (re.compile("|".join(re.escape(v) for v in sorted(m, key=len, reverse=True))), m) if m else (None, m)
+    rx, m = _ADMIN_NAMES[key]
+    return rx.sub(lambda x: m[x.group(0)], body) if rx else body
+
+
+def without_links(text):
+    """Local demo messages never send external URLs, including stale model output."""
+    text = re.sub(r"\[([^\]]+)\]\((?:https?://|www\.)[^)]+\)", r"\1", str(text), flags=re.I)
+    text = re.sub(r"(?:https?://|www\.)[^\s<>\"']+", "", text, flags=re.I)
+    text = re.sub(r"(?<![@\w])(?:[a-z0-9-]+\.)+(?:com|net|org|dev|io|app|co|shop|store)\b(?:/[^\s<>\"']*)?", "", text, flags=re.I)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
 def send_text(to, body):
     """Returns a message ref (WhatsApp message id, or 'f<feed id>' in mock mode) so replies can be tied back to it."""
+    if ADMIN_TRANSLATE and (to in admins() or str(to).startswith("dashboard")) and (kget("adminlang:" + to) or "en") != "en":
+        try:
+            body = ADMIN_TRANSLATE(body, kget("adminlang:" + to))
+        except Exception as e:
+            log(f"admin translation failed, sent as written: {e!r}")
+    body = without_links(admin_names(to, body))
+    if not body:
+        return ""
     feed(to, "text", body)
     ref = f"f{FEED[-1]['id']}"
     remember_msg(ref, body)
@@ -1145,6 +1201,12 @@ def send_text(to, body):
 
 
 def send_doc(to, path, caption=""):
+    if caption and (to in admins() or str(to).startswith("dashboard")):  # the caption follows the admin's language mode like every other message to him
+        try:
+            caption = admin_names(to, ADMIN_TRANSLATE(caption, kget("adminlang:" + to)) if ADMIN_TRANSLATE and (kget("adminlang:" + to) or "en") != "en" else caption)
+        except Exception as e:
+            log(f"admin caption translation failed: {e!r}")
+    caption = without_links(caption)
     out = P("outbox") / f"{now().strftime('%H%M%S')}_{Path(path).name}"
     out.parent.mkdir(exist_ok=True)
     shutil.copy(path, out)
@@ -1154,6 +1216,7 @@ def send_doc(to, path, caption=""):
 
 
 def send_image(to, jpeg_bytes, caption=""):
+    caption = without_links(caption)
     out = P("outbox") / f"{now().strftime('%H%M%S%f')}_photo.jpg"
     out.parent.mkdir(exist_ok=True)
     out.write_bytes(jpeg_bytes)
@@ -1164,9 +1227,11 @@ def send_image(to, jpeg_bytes, caption=""):
 
 
 def send_template(to, name, params, preview):
+    params = [without_links(value) for value in params]
+    preview = without_links(preview)
     feed(to, "template", preview, tpl=name)
     ref = f"f{FEED[-1]['id']}"
-    if str(to).startswith("tg:") or cfg("WAHA_API_KEY"):  # Telegram and WAHA have no templates and no 24-hour window: the text itself is sent
+    if str(to).startswith("tg:"):  # legacy ids are retained only for existing records
         return send_text(to, preview)
     return (TRANSPORT.send_template(to, name, params) or ref) if TRANSPORT else ref
 
@@ -1174,8 +1239,8 @@ def send_template(to, name, params, preview):
 TPL = {"order": "order_alert", "quote": "order_alert", "issue": "issue_alert", "limit": "limit_warning", "info": "admin_notice"}
 
 
-CHEERS = tuple(f"{a} {b}" for a in (  # hand-written, formal, no emojis: one goes to the owners each time an order is completed (payment confirmed, invoice sent)
-    "The order is complete.", "Payment has been verified.", "The invoice has been issued.", "The order is now closed.", "The customer was notified.",
+CHEERS = tuple(f"{a} {b}" for a in (  # hand-written, formal, no emojis: one goes to the owners each time an order is completed (payment confirmed, receipt sent)
+    "The order is complete.", "Payment has been verified.", "The receipt has been issued.", "The order is now closed.", "The customer was notified.",
 ) for b in (
     "Thank you for your work.", "Thank you for your diligence.", "We appreciate your attention.", "Well done to the whole team.", "Your efforts are appreciated.",
     "Thank you for your care.", "Excellent service, thank you.", "Thank you for acting promptly.", "The team is appreciated.", "Thank you for your dedication.",
@@ -1330,17 +1395,26 @@ def fx(cur):
     return fx_info(cur)[0]
 
 
+def catalog_photo(pid):
+    """Resolve an existing local catalog image; product ids cannot escape the catalog."""
+    base = (ROOT / "dl/data/catalog").resolve()
+    folder = (base / str(pid)).resolve()
+    if folder.parent != base:
+        raise ValueError("invalid catalog product id")
+    return next((p for p in sorted(folder.glob("*"))
+                 if p.is_file() and p.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".avif"}
+                 and p.resolve().is_relative_to(base)), None)
+
+
 def product_jpeg(p):
-    """Catalog photo as JPEG bytes (WhatsApp does not take webp/avif): local copy first, else download."""
-    import glob, io
+    """JPEG bytes from a local photo only. Missing photos never trigger a download."""
+    import io
     from PIL import Image
-    for f in sorted(glob.glob(str(ROOT / "dl/data/catalog" / str(p["id"]) / "*"))):
-        raw = Path(f).read_bytes()
-        break
-    else:
-        import httpx
-        raw = httpx.get(html_unescape(p["image"]), timeout=15).content if p.get("image") else b""
-    im = Image.open(io.BytesIO(raw)).convert("RGB")
+    photo = catalog_photo(p["id"])
+    if photo is None:
+        raise FileNotFoundError(f"No local photo for product {p['id']}")
+    with Image.open(photo) as source:
+        im = source.convert("RGB")
     im.thumbnail((1280, 1280))
     buf = io.BytesIO(); im.save(buf, "JPEG", quality=88)
     return buf.getvalue()
@@ -1540,7 +1614,7 @@ def order_summary(r):
         parts.append(f"{nm}" + (f" = {fmt_tl(pr)}" if pr is not None else " (needs your price)"))
     tail = (f" | Subtotal {fmt_tl(r['subtotal'] or 0)}" if L else "") + (f" | TOTAL {fmt_tl(r['total'])}" if r["total"] else " | TOTAL: waiting for your price for the custom part")
     if r["delivery_type"] or r["delivery_fee"] != "":
-        tail += f" | Delivery: {r['delivery_type'] or 'normal'}" + (f" {r['delivery_time']}" if r["delivery_time"] else "") + (f" to {_json('delivery.json')['areas'].get(r['delivery_area'], {}).get('label', {}).get('en', custom_area(r) or r['delivery_area'])}" if r["delivery_area"] else "") \
+        tail += f" | Delivery: {r['delivery_type'] or 'normal'}" + (f" {dtime(r)}" if r["delivery_time"] else "") + (f" to {_json('delivery.json')['areas'].get(r['delivery_area'], {}).get('label', {}).get('en', custom_area(r) or r['delivery_area'])}" if r["delivery_area"] else "") \
                 + (f" = {fmt_tl(r['delivery_fee'])}" if r["delivery_fee"] != "" else " (fee not known yet)") \
                 + (f" | {'Service fee' if adjustment(r) > 0 else 'Discount'} {fmt_tl(abs(adjustment(r)))}" if adjustment(r) else "") + (f" | TO PAY {fmt_tl(r['payable'])}" if r["payable"] else "")
     return "; ".join(parts) + tail
@@ -1554,8 +1628,10 @@ def order_facts(r):
         out.append(f"Paid so far: {fmt_tl(paid)}" + (f" · balance {fmt_tl(pay - paid)}" if pay else ""))
     note = re.findall(r"\| note: ([^|]*)", r["notes"] or "")
     det = [f"sender {r['sender_name'] or '-'} {r['sender_phone'] or ''}".rstrip(), f"recipient {r['recipient_name'] or '-'} {r['recipient_phone'] or ''}".rstrip(), f"address {r['address'] or '-'}",
-           f"date {r['delivery_date'] or '-'} {r['delivery_time'] or ''}".rstrip(), f"card note {note[-1].strip()}" if note else "no card note"]
+           f"date {r['delivery_date'] or '-'} {dtime(r)}".rstrip(), f"card note {note[-1].strip()}" if note else "no card note"]
     out.append("Form: " + " · ".join(det))
+    if r["delivery_type"] == "jet" and r["delivery_time"]:  # whether the requested jet time still waits for the team (the recap said "team approval required")
+        out.append(f"Jet time {dtime(r)}: " + ("ACCEPTED: the team confirmed this order with that time." if r["status"] in LOCKED else "only REQUESTED: the team approves it when it confirms the order."))
     miss = form_missing(r) + delivery_missing(r)
     prob = delivery_calc(r)["problems"] if r["status"] in OPEN else []
     if r["status"] in OPEN and (miss or prob or r["custom_items"] and not r["custom_price"]):
@@ -1602,10 +1678,10 @@ def hours_note(r):
 
 
 def approval_notes(r):
-    """What only the owner can decide, written into his order confirmation (the card, the sales order, the order block): a JET time is a REQUEST he approves by confirming (never asked separately); an area that is not in the price list needs his fee."""
+    """What only the owner can decide, written into his order confirmation (the card, the order request, the order block): a JET time is a REQUEST he approves by confirming (never asked separately); an area that is not in the price list needs his fee."""
     out = []
     if (r["delivery_type"] or "") == "jet":
-        out.append(f"⏱ JET delivery requested for {r['delivery_date'] or '?'} {r['delivery_time'] or '(time not given)'}: confirm the order ONLY if that time is possible.")
+        out.append(f"⏱ JET delivery requested for {r['delivery_date'] or '?'} {dtime(r) or '(time not given)'}: confirm the order ONLY if that time is possible.")
     if custom_area(r):
         out.append(f"📍 Area '{custom_area(r)}' is not in the price list: set the delivery fee yourself.")
     return out
@@ -1630,6 +1706,8 @@ def order_block(r, note=True):
     n = cur_note(r)
     if n:
         out.append(n)
+    for m_ in re.findall(r"\| memo: ([^|]*)", r["notes"] or ""):
+        out.append(f"📝 Customer note: {m_.strip()}")
     if note and hours_note(r):
         out.append(hours_note(r))
     return "\n".join(out)
@@ -1661,7 +1739,7 @@ def _place_index():
     """Every spelling that points to a delivery area: the landmarks of data/landmarks.json (universities, hotels, hospitals... with their short forms like NEU / YDU / EMU) and the city names of data/delivery.json: [(folded name, area key, is_landmark)]."""
     rows = [(fold(n), o["area"], True) for o in _json("landmarks.json")["landmarks"] for n in o["names"] if len(fold(n)) >= 3]
     rows += [(fold(n), k, False) for k, a in _json("delivery.json")["areas"].items() for n in a["names"]]
-    return sorted(set(rows), key=lambda x: -len(x[0]))
+    return sorted(set(rows), key=lambda x: (-len(x[0]), x[0], x[1]))  # same length: by name, so the order never depends on the process
 
 
 def _fuzzy_area(t):
@@ -1741,9 +1819,10 @@ def detect_area(address):
         for m in re.finditer(rf"(?<![^\W_]){re.escape(nm)}(?![^\W_])", t):
             (lm if is_lm else city).append((len(nm), key, m.span()))
     city = [c for c in city if not any(l[2][0] <= c[2][0] and c[2][1] <= l[2][1] for l in lm)]  # a city word that is part of a landmark's name is not a written city
+    spec = lambda k: 1 if k.endswith("_outer") or k == "remote" else 0  # a village named next to its district is the more specific place ("Lapta, Kyrenia" is the outer area)
     for group in (city, lm):
         if group:
-            return max(group, key=lambda x: x[0])[1]
+            return max(group, key=lambda x: (spec(x[1]), x[0], x[1]))[1]
     part = partial_landmarks(t)
     if part:
         return part[0]["area"]
@@ -1762,7 +1841,7 @@ def _hhmm(mins):
     return f"{mins // 60:02d}:{mins % 60:02d}"
 
 
-FOREIGN = re.compile(r"\b(?:sharjah|dubai|abu dhabi|ajman|fujairah|ras al khaimah|uae|emirates|saudi|riyadh|jeddah|qatar|doha|kuwait|bahrain|oman|muscat|london|england|germany|berlin|france|paris|russia|moscow|istanbul|ankara|izmir|antalya|mersin|turkey|turkiye|limassol|larnaca|paphos|south cyprus|greece|athens)\b")  # places a North Cyprus shop does not deliver to
+FOREIGN = re.compile(r"\b(?:sharjah|dubai|abu dhabi|ajman|fujairah|ras al khaimah|uae|emirates|saudi|riyadh|jeddah|mecca|qatar|doha|kuwait|bahrain|manama|oman|muscat|iraq|baghdad|iran|tehran|israel|tel aviv|jerusalem|jordan|amman|lebanon|beirut|syria|damascus|egypt|cairo|libya|tunisia|morocco|algeria|london|england|britain|manchester|birmingham|scotland|ireland|dublin|germany|berlin|munich|france|paris|spain|madrid|barcelona|italy|rome|milan|netherlands|amsterdam|belgium|brussels|switzerland|zurich|austria|vienna|sweden|stockholm|norway|oslo|denmark|poland|warsaw|czech|prague|hungary|budapest|romania|bucharest|bulgaria|sofia|serbia|belgrade|ukraine|kyiv|kiev|russia|moscow|st petersburg|belarus|minsk|georgia|tbilisi|armenia|azerbaijan|baku|kazakhstan|uzbekistan|pakistan|india|delhi|mumbai|china|beijing|shanghai|japan|tokyo|korea|seoul|thailand|bangkok|singapore|australia|sydney|canada|toronto|usa|america|new york|los angeles|miami|chicago|brazil|mexico|argentina|nigeria|lagos|south africa|kenya|istanbul|ankara|izmir|antalya|bursa|mersin|adana|konya|turkey|turkiye|limassol|larnaca|paphos|south cyprus|southern cyprus|greek cyprus|nicosia south|greece|athens|crete|another country|abroad|overseas|international)\b")  # places a North Cyprus shop does not deliver to
 CUSTOM_AREA = "other:"  # a place the customer named that is not among the saved ones: what they said IS the area, the team sets its fee
 
 
@@ -1803,7 +1882,7 @@ def today_problems(r, a):
     if (r["delivery_type"] or "normal") == "normal":
         h, m = (int(x) for x in a["departure"].split(":"))
         if n.hour * 60 + n.minute >= h * 60 + m:
-            return [f"today's standard delivery for {a['label']['en']} already left at {a['departure']}: SAY WHEN NORMAL DELIVERY GOES for {a['label']['en'].split(' (')[0]} (every day it leaves at {a['departure']}, free) and offer tomorrow's standard delivery ({(d + timedelta(days=1)):%d.%m.%Y}, leaving at {a['departure']}); if the customer still wants it today, jet delivery is only a REQUEST the team approves (never say it is possible, never name times or windows)"]
+            return [f"today's standard delivery for {a['label']['en']} already left at {a['departure']}: SAY WHEN NORMAL DELIVERY GOES for {a['label']['en'].split(' (')[0]} (every day it leaves at {a['departure']}, free) and offer tomorrow's standard delivery ({(d + timedelta(days=1)):%d.%m.%Y}, leaving at {a['departure']}); " + ("it is after 22:00: ALL DELIVERIES ARE DONE FOR TODAY (no jet either): say that plainly and offer tomorrow, normal at its usual time or a jet request for tomorrow (08:00-22:00), never a jet for today" if n.hour >= 22 else "if the customer still wants it today, jet delivery is only a REQUEST the team approves (never say it is possible, never name times or windows)")]
     return []
 
 
@@ -1867,7 +1946,8 @@ def today_status(key=None, r=None):
     if late:
         return f"Shop time now: {n:%A %d.%m.%Y %H:%M}. " + policy("not_same_day", "en", item=", ".join(late)) + " THE ORDER MUST BE FOR TOMORROW or later: tell the customer so."
     return (f"Shop time now: {n:%A %d.%m.%Y %H:%M}. " + "; ".join(rows) + ". RULE: before the standard run leaves, today is possible with standard delivery. AFTER it left, today is possible ONLY if the team approves a JET request: the customer asks for a jet time, you never say it is possible and never name times or windows; "
-            "otherwise tomorrow (standard delivery at its usual time, or a jet request). Orders are taken for today and at most 2 days ahead.")
+            "otherwise tomorrow (standard delivery at its usual time, or a jet request). Orders are taken for today and at most 2 days ahead. "
+            + ("AFTER 22:00 NOTHING IS POSSIBLE TODAY, not even jet: say all deliveries are done for today and offer TOMORROW (standard delivery at its usual time, free; or a jet request between " + cfg("WORK_FROM", "08:00") + " and 22:00 with the area's jet fee) and recheck the choices for tomorrow. " if n.hour >= 22 else ""))
 
 
 def today_answer(lang, key=None, r=None):
@@ -1891,6 +1971,14 @@ def today_answer(lang, key=None, r=None):
         return ("It depends on your city: the standard run leaves between {d} (area by area). Which city is it for?", "Şehrinize göre değişir: standart çıkış bölgeye göre {d} arasında. Hangi şehir için?", "Зависит от города: стандартный выезд {d} (по районам). Для какого города?")[lang].format(d=dep)
     fee = fmt_tl(a["jet_fee"]) if a and a.get("jet_fee") is not None else None
     fee_text = ((f" Jet delivery costs {fee}.", f" Jet teslimat ücreti {fee}.", f" Стоимость экспресс-доставки: {fee}.")[lang] if fee else "")
+    if t >= 22 * 60:  # even a jet request can no longer be made for today: all deliveries are done, tomorrow is checked (standard run + jet window)
+        wf = cfg("WORK_FROM", "08:00")
+        jet = ((f", or a jet delivery at a time you choose between {wf} and 22:00" + (f" ({fee})" if fee else " (the fee depends on the area)") + ", which the team approves",
+                f", ya da {wf} ile 22:00 arasında seçeceğiniz bir saatte jet teslimat" + (f" ({fee})" if fee else " (ücret bölgeye göre değişir)") + "; ekip onaylar",
+                f", либо экспресс-доставка в выбранное вами время с {wf} до 22:00" + (f" ({fee})" if fee else " (стоимость зависит от района)") + ", которую подтверждает команда")[lang])
+        return (f"No, all deliveries are done for today 🌸 I can plan a delivery for tomorrow: standard delivery leaves at {dep} (free){jet}. Would you like to order for tomorrow?",
+                f"Hayır, bugünkü tüm teslimatlar tamamlandı 🌸 Yarın için teslimat planlayabilirim: standart teslimat saat {dep}'de çıkar (ücretsiz){jet}. Yarın için sipariş vermek ister misiniz?",
+                f"Нет, на сегодня все доставки завершены 🌸 Могу запланировать доставку на завтра: стандартная доставка выезжает в {dep} (бесплатно){jet}. Хотите оформить заказ на завтра?")[lang]
     return ("No, today's standard delivery already left. Tomorrow standard delivery leaves at {d}. If you want it today, tell me the jet time you would like: it is a request that the team approves when confirming your order.",
             "Hayır, bugünkü standart teslimat çıktı. Yarın standart teslimat saat {dt} çıkar. Bugün istiyorsanız istediğiniz jet saatini yazın: bu bir taleptir, siparişinizi onaylarken ekip onaylar.",
             "Нет, сегодняшний стандартный выезд уже был. Завтра стандартная доставка выезжает в {d}. Если нужно сегодня, напишите желаемое время экспресс-доставки: это запрос, который команда подтверждает при подтверждении заказа.")[lang].format(d=dep, dt=dtr) + fee_text
@@ -1918,13 +2006,13 @@ def delivery_calc(r):
         fee = D(own.group(1))
     shared, shared_goods = None, Decimal(0)
     if fee is not None and not own and r["address"] and r["delivery_date"]:  # one shipment = one fee: another order of this customer going to the same address at the same date and time already pays it (different products don't matter)
-        mine = (fold(r["address"]), r["delivery_date"], requested_time if dtype == "jet" and not standard_time else a["departure"])
+        mine = (re.sub(r"\W", "", fold(r["address"])), r["delivery_date"], requested_time if dtype == "jet" and not standard_time else a["departure"])
         for x in orders():
             x_time = re.search(r"(\d{1,2})[:.](\d{2})", x["delivery_time"] or "") if x["delivery_type"] == "jet" else None
             x_jet_time = f"{int(x_time.group(1)):02d}:{x_time.group(2)}" if x_time else ""
             x_standard = x["delivery_type"] == "jet" and x_jet_time == a["departure"]
             if x["customer_number"] == r["customer_number"] and int(x["order_id"]) < int(r["order_id"]) and x["status"] not in ("rejected", "cancelled", "completed") and x["delivery_type"] != "pickup" \
-                    and (fold(x["address"]), x["delivery_date"], x_jet_time if x["delivery_type"] == "jet" and not x_standard else a["departure"]) == mine:
+                    and (re.sub(r"\W", "", fold(x["address"])), x["delivery_date"], x_jet_time if x["delivery_type"] == "jet" and not x_standard else a["departure"]) == mine:
                 fee, shared = Decimal(0), int(x["order_id"])
                 shared_goods = D(x["total"] or x["subtotal"] or 0)
                 break
@@ -1988,6 +2076,65 @@ def delivery_missing(row):
     return missing
 
 
+def time_window(kind):
+    """(from, to) the shop takes a JET request or a PICK-UP in: jet 08:00 - 22:00, pick-up = the opening hours (WORK_FROM - WORK_TO, 08:00 - 23:00)."""
+    return cfg("WORK_FROM", "08:00"), "22:00" if kind == "jet" else cfg("WORK_TO", "23:00")
+
+
+def _hm(s):
+    m = re.fullmatch(r"\s*(\d{1,2})[:.](\d{2})\s*", str(s or ""))
+    return (f"{int(m[1]):02d}:{m[2]}" if int(m[1]) < 24 and int(m[2]) < 60 else "") if m else ""
+
+
+def check_window(start, end, kind, date_s=""):
+    """The time the LLM read from the customer (start = 24h HH:MM, end = the optional "before" deadline) -> (start, end, problem). A PICK-UP must lie inside the opening hours and not in the past; a range must
+    end inside the allowed hours and after its start; a jet START keeps being judged by jet_time_issue as before. The start is the stored time, the end only a deadline kept in the notes."""
+    lo, hi = time_window(kind)
+    s_, e_ = _hm(start), _hm(end)
+    if (start and not s_) or (end and not e_):
+        return "", "", f"the time '{start}{'-' + end if end else ''}' is not valid: give HH:MM in 24h."
+    mins = lambda x: int(x[:2]) * 60 + int(x[3:5])
+    try:
+        today = datetime.fromisoformat(str(date_s)[:10]).date() == now().date()
+    except ValueError:
+        today = False
+    nowm = now().hour * 60 + now().minute
+    bad = f"{'jet delivery' if kind == 'jet' else 'pick-up'} is possible between {lo} and {hi}: tell the customer these hours and ask for a time inside them (a range such as 14:00-18:00, or any time, is fine)."
+    if kind != "jet" and s_ and not e_ and not (lo <= s_ <= hi):
+        return "", "", f"{s_} is outside the opening hours: " + bad
+    if e_:
+        if s_ < lo and e_ >= lo:
+            s_ = lo  # "between 7 and 11" opens at the opening time
+        if not (lo <= e_ <= hi) or e_ <= s_ or (kind != "jet" and not (lo <= s_ <= hi)):
+            return "", "", f"the time {start}-{end} is outside the allowed hours: " + bad
+    if today and s_ and kind != "jet" and not e_ and mins(s_) <= nowm:
+        return "", "", f"{s_} has already passed in Cyprus ({now():%H:%M}): ask for a later time today (up to {hi}) or for another day."
+    if today and e_:
+        if mins(e_) <= nowm:
+            return "", "", f"that time has already passed in Cyprus ({now():%H:%M}): ask for a later time today (up to {hi}) or for another day."
+        if mins(s_) <= nowm:  # the window has started: from the next quarter hour, deadline unchanged
+            q = min((nowm // 15 + 1) * 15, 23 * 60 + 59)
+            s_ = f"{q // 60:02d}:{q % 60:02d}"
+    return s_, e_, ""
+
+
+def before_of(r):
+    """The deadline the customer gave with a time range ("must be there before"), or ''."""
+    m = re.search(r" \| before: (\d\d:\d\d)", r["notes"] or "")
+    return m[1] if m else ""
+
+
+def dtime(r, lg=0):
+    """The delivery / pick-up time as people read it: '09:00' or '09:00 (must arrive before 11:00)' in en / tr / ru (0 / 1 / 2)."""
+    s, e = r["delivery_time"] or "", before_of(r)
+    if not s or not e:
+        return s
+    pick = r["delivery_type"] == "pickup"
+    return s + (("(collect before {e})", "(en geç {e})", "(забрать до {e})") if pick else ("(must arrive before {e})", "(en geç {e})", "(доставить до {e})"))[lg].replace("(", " (", 1).format(e=e)
+
+
+
+
 def jet_time_issue(row):
     """A jet request must be in the future for today and no later than 22:00 Cyprus time."""
     m = re.fullmatch(r"\s*(\d{1,2})[:.](\d{2})\s*", row.get("delivery_time") or "")
@@ -2006,7 +2153,7 @@ def jet_time_issue(row):
 
 
 def submission_missing(row):
-    """Check stored form, basket and prices before sending a sales order."""
+    """Check stored form, basket and prices before sending an order request."""
     missing = form_missing(row) + delivery_missing(row)
     lines = row_lines(row)
     if not lines and not row["custom_items"]:
@@ -2088,9 +2235,9 @@ def linked_ids(phone):
 
 
 def last_form(phone):
-    """The delivery details the customer already gave on an earlier order (the latest one that has them), for an add-on order: same sender, recipient, address, date and delivery choice."""
+    """Latest saved details, including cancelled orders, for contact reuse. Shipment reuse must pass shipment_details validation."""
     ids = linked_ids(phone)
-    for r in reversed([x for x in orders() if x["customer_number"] in ids and x["status"] not in ("rejected", "cancelled")]):
+    for r in reversed([x for x in orders() if x["customer_number"] in ids]):
         if r["sender_name"] and (r["address"] or r["delivery_type"] == "pickup"):
             return r
     return None
@@ -2106,7 +2253,7 @@ def _people_from_orders(phone):
     """The address book as the ORDERS show it (kept permanently): each recipient with phone, address, the date of the last time and how often. Newest wins."""
     out = {}
     ids = linked_ids(phone)
-    for r in reversed([x for x in orders() if x["customer_number"] in ids and x["recipient_name"] and x["status"] not in ("rejected", "cancelled")]):
+    for r in reversed([x for x in orders() if x["customer_number"] in ids and x["recipient_name"]]):
         k = pkey(r["recipient_name"], r["recipient_phone"])
         c = out.setdefault(k, {"key": k, "name": r["recipient_name"], "phone": r["recipient_phone"], "address": r["address"] if not r["address"].startswith("PICKUP") else "", "last": r["timestamp"][:10], "times": 0, "order": r["order_id"], "relation": "", "note": ""})
         c["times"] += 1
@@ -2352,11 +2499,23 @@ def order_form_update(oid, **f):
         rows = orders()
         r = next(x for x in rows if int(x["order_id"]) == int(oid))
         assert r["status"] in OPEN
+        before, time_bad = None, []  # deadline of a time range (None = untouched)
+        end_ = f.pop("deliver_before", "")
+        if f.get("delivery_time") or end_:
+            kind_ = f.get("delivery_type") or r["delivery_type"] or "jet"
+            st_, en_, why_ = check_window(f.get("delivery_time") or r["delivery_time"], end_, "pickup" if kind_ == "pickup" else "jet", f.get("delivery_date") or r["delivery_date"])
+            if st_:
+                f["delivery_time"], before = st_, en_
+            else:
+                f.pop("delivery_time", None)
+                if why_:
+                    time_bad = [why_]  # reported like a refused date: nothing is stored, the customer is told
         if f.get("delivery_time") and not f.get("delivery_type") and r["delivery_type"] != "pickup":
             f["delivery_type"] = "jet"  # a specific requested time is priced as jet delivery
         if f.get("delivery_type") == "pickup" and r["delivery_type"] != "pickup":
             r["delivery_time"] = ""
         note = f.pop("note", "")
+        memo = str(f.pop("memo", "") or "").strip()
         city = str(f.pop("city", "") or "").strip()
         same = f.pop("recipient_is_sender", False)
         unknown = f.pop("recipient_unknown", False)  # the customer does not want to give the recipient's NAME: "Anonymous"
@@ -2390,11 +2549,23 @@ def order_form_update(oid, **f):
                 r["delivery_area"] = key_
             elif not detect_area(r["address"]):  # not among the saved places: what the customer said IS the area (the team sets its fee)
                 r["delivery_area"] = CUSTOM_AREA + city[:60]
+        new_rn, new_rp = str(f.get("recipient_name") or "").strip(), str(f.get("recipient_phone") or "").strip()
+        if not same and "recipient = sender" in r["notes"] and ((new_rn and fold(new_rn) != fold(r["sender_name"] or "")) or (new_rp and check_phone(new_rp)[0] and canon_phone(new_rp) != canon_phone(r["sender_phone"] or ""))):
+            r["notes"] = r["notes"].replace(" | recipient = sender", "")  # it was for themselves, now it goes to someone else: the recipient they named is kept (editable at any step)
+            r["recipient_name"] = new_rn or ("" if fold(r["recipient_name"] or "") == fold(r["sender_name"] or "") else r["recipient_name"])
+            if new_rp and check_phone(new_rp)[0]:
+                r["recipient_phone"] = "+" + check_phone(new_rp)[0]
+            elif canon_phone(r["recipient_phone"] or "") == canon_phone(r["sender_phone"] or ""):
+                r["recipient_phone"] = ""
+        if not same and r["sender_phone"] and r["recipient_phone"] and "recipient = sender" not in r["notes"] and canon_phone(r["recipient_phone"]) == canon_phone(r["sender_phone"]):
+            same = True  # the recipient's number is the sender's own: it is for themselves (a friend may collect it), the recipient is never asked
         if same and "recipient = sender" not in r["notes"]:
             r["notes"] += " | recipient = sender"
         if "recipient = sender" in r["notes"]:  # the customer sends it to themselves: the recipient follows the sender, never asked again
             r["recipient_name"], r["recipient_phone"] = r["sender_name"], r["sender_phone"]
-        if note:
+        if memo and memo.replace("|", "/") not in [x.strip() for x in re.findall(r"\| memo: ([^|]*)", r["notes"])]:  # something the customer asked the team to keep in mind (not the card text)
+            r["notes"] += f" | memo: {memo.replace('|', '/')}"
+        if note and fold((re.findall(r"\| note: ([^|]*)", r["notes"]) or [""])[-1].strip()) != fold(note.strip()):  # the same card message said twice is kept once
             r["notes"] += f" | note: {note}"
         if f.get("delivery_type") == "normal":
             r["delivery_time"] = ""
@@ -2416,8 +2587,12 @@ def order_form_update(oid, **f):
             picked = re.fullmatch(r"\s*(\d{1,2})[:.](\d{2})\s*", r["delivery_time"] or "")
             if area and picked and f"{int(picked.group(1)):02d}:{picked.group(2)}" == area["departure"]:
                 r["delivery_type"], r["delivery_time"] = "normal", ""
+        if before is not None or r["delivery_type"] == "normal" or not r["delivery_time"]:  # the deadline follows the time it belongs to
+            r["notes"] = re.sub(r" \| before: \d\d:\d\d", "", r["notes"])
+            if before and r["delivery_time"]:
+                r["notes"] += f" | before: {before}"
         calc = delivery_calc(r)
-        calc["problems"] = calc["problems"] + [p_ for p_ in bad_date + bad_phone if p_ not in calc["problems"]]
+        calc["problems"] = calc["problems"] + [p_ for p_ in bad_date + bad_phone + time_bad if p_ not in calc["problems"]]
         r["delivery_area"] = calc["key"]
         if calc["key"] in _json("delivery.json")["areas"] and split_address(r["address"])[0] and not r["address"].startswith("PICKUP"):  # the written address always carries the city (from the city given, or found from the landmark)
             nm_ = _json("delivery.json")["areas"][calc["key"]]["label"]["en"].split(" (")[0]
@@ -2450,17 +2625,8 @@ def render_form(r, lang, template=None):
     """Fill the fixed or translated template with known values; customer data is never translated."""
     note = re.findall(r"\| note: ([^|]*)", r["notes"])
     phone = r["sender_phone"] and ("+" + r["sender_phone"].lstrip("+") if r["sender_phone"].isdigit() else r["sender_phone"])
-    if r["delivery_type"] == "pickup":
-        templates = _json("pickup_form.json")
-        source = template or templates.get(lang) or templates["en"]
-        values = iter((r["sender_name"], phone))
-        lines = source.split("\n")
-        for i, line in enumerate(lines):
-            if line.rstrip().endswith(":"):
-                value = next(values)
-                if value:
-                    lines[i] = line + " " + str(value)
-        return "\n".join(lines)
+    if r["delivery_type"] == "pickup":  # no form: the shop's location and hours, and a request to WRITE the name, phone, day and time
+        return pickup_block(r, lang if lang in PICKUP_WORDS else "en", ask=True)
     key_ = detect_area(r["address"]) or r["delivery_area"]
     area = _json("delivery.json")["areas"].get(key_) or {}
     city = area.get("label", {}).get("en", "").split(" (")[0] or custom_area(r)
@@ -2517,7 +2683,7 @@ def change_explain(old, new, lang="en"):
     def dlv(r):
         t = r["delivery_type"] or "normal"
         fee = fmt_tl(r["delivery_fee"]) if r["delivery_fee"] != "" and D(r["delivery_fee"]) else L["free"]
-        return f"{L.get(t, t)}{' ' + r['delivery_time'] if t == 'jet' and r['delivery_time'] else ''} ({fee})"
+        return f"{L.get(t, t)}{' ' + dtime(r) if t == 'jet' and r['delivery_time'] else ''} ({fee})"
     if (old["delivery_type"], old["delivery_time"], old["delivery_fee"], old["delivery_area"]) != (new["delivery_type"], new["delivery_time"], new["delivery_fee"], new["delivery_area"]):
         out.append(L["dlv"].format(a=dlv(old), b=dlv(new)))
     if adjustment(old) != adjustment(new):
@@ -2527,6 +2693,30 @@ def change_explain(old, new, lang="en"):
         return ""
     out.append(L["total"].format(a=fmt_tl(ta), b=fmt_tl(tb)))
     return L["head"] + "\n" + "\n".join("• " + x for x in out)
+
+
+PICKUP_WORDS = {
+    "en": dict(title="📍 Pick-up at the shop", open="🕘 Open every day {hours}", ask="Please write your name, your phone number, and the day and time (or a time range, such as 14:00-18:00, or \"any time\") you will come.",
+               when="Your pick-up: {when}", who="Order #{oid} · name on the order: {name}", friend="Anyone can collect it, such as a friend: they just need the order number or the name.", nofee="No pick-up fee."),
+    "tr": dict(title="📍 Mağazadan teslim alma", open="🕘 Her gün açığız {hours}", ask="Lütfen adınızı, telefon numaranızı ve geleceğiniz gün ve saati (ya da 14:00-18:00 gibi bir saat aralığını, veya \"fark etmez\") yazın.",
+               when="Teslim alma: {when}", who="Sipariş #{oid} · siparişteki isim: {name}", friend="Siparişi bir arkadaşınız da alabilir: sipariş numarasını ya da adı söylemesi yeterli.", nofee="Mağazadan teslim almada ücret yoktur."),
+    "ru": dict(title="📍 Самовывоз из магазина", open="🕘 Работаем каждый день {hours}", ask="Напишите, пожалуйста, ваше имя, номер телефона, а также день и время (или промежуток, например 14:00-18:00, или «в любое время»), когда придёте.",
+               when="Самовывоз: {when}", who="Заказ #{oid} · имя в заказе: {name}", friend="Заказ может забрать и друг: достаточно назвать номер заказа или имя.", nofee="Самовывоз бесплатный."),
+}
+
+
+def pickup_block(r, lang, ask=False):
+    """The fixed (hard-coded) pick-up message: where, when we are open, and either what to write (ask) or the customer's pick-up window as a reminder."""
+    L = PICKUP_WORDS.get(lang, PICKUP_WORDS["en"])
+    b = business_info()
+    hours = re.sub(r"^.*?\)\s*", "", b.get("hours") or "08:00 - 23:00")
+    lines = [L["title"], b.get("address") or "", b.get("maps_url") or "", L["open"].format(hours=hours)]
+    if ask:
+        lines += ["", L["ask"]]
+    else:
+        when = " ".join(x for x in (r["delivery_date"], dtime(r, LANG3.index(lang) if lang in LANG3 else 0)) if x)
+        lines += ["", L["when"].format(when=when), L["who"].format(oid=r["order_id"], name=r["sender_name"] or "-"), L["friend"], L["nofee"]]
+    return "\n".join(x for x in lines if x is not None)
 
 
 def payment_text(r, lang, intro=None, outro=None, why=""):
@@ -2546,7 +2736,7 @@ def payment_text(r, lang, intro=None, outro=None, why=""):
     if r["delivery_type"] == "pickup":
         out.append(L["pickup"] + fee)
     elif r["delivery_type"] == "jet":
-        out.append(L["jet"].format(label=label, time=r["delivery_time"]) + fee)
+        out.append(L["jet"].format(label=label, time=dtime(r, LANG3.index(lang) if lang in LANG3 else 0)) + fee)
     else:
         out.append(L["normal"].format(label=label, dep=a["departure"] if a else "") + fee)
     adj = adjustment(r)
@@ -2560,6 +2750,8 @@ def payment_text(r, lang, intro=None, outro=None, why=""):
     else:
         out.append(L["total"] + fmt_tl(r["payable"]))
     out += ["", pay["holder"], pay["bank"], pay["iban"]] + ([pay["extra"]] if pay.get("extra") else []) + [outro or pay["receipt_line"].get(lang) or pay["receipt_line"]["en"]]
+    if r["delivery_type"] == "pickup":  # where and when to come, again, under the bank details
+        out += ["", pickup_block(r, lang)]
     return "\n".join(out)
 
 
@@ -2580,8 +2772,14 @@ def change_preview(r):
         return p, None
     if req.get("lines") is not None:
         p.update(_cols([(n, q, D(u)) for n, q, u in req["lines"] if q > 0]))
-    for k, v in (req.get("details") or {}).items():
+    det_ = dict(req.get("details") or {})
+    end_ = det_.pop("deliver_before", "")
+    for k, v in det_.items():
         p[k] = v
+    if "delivery_time" in det_ or end_:  # a new time brings its own deadline (or none): the old "before" never stays behind
+        p["notes"] = re.sub(r" \| before: \d\d:\d\d", "", p["notes"])
+        if end_ and p["delivery_time"]:
+            p["notes"] += f" | before: {end_}"
     if req.get("note"):
         p["notes"] += f" | note: {req['note']}"
     if p["delivery_type"] == "pickup":
@@ -2610,7 +2808,7 @@ def request_change(oid, phone, req):
 
 def change_apply(oid, requote=False):
     """The owner approved: write the change into orders.csv. Returns (new row, balance, why-not). balance = new payable - paid (> 0: the customer owes the difference).
-    requote=True: a direct admin edit before payment confirmation resets approval: the order goes back to the first-confirmation step (status pending), a new quotation follows after the customer and the owner confirm it again."""
+    requote=True: a direct admin edit before payment confirmation resets approval: the order goes back to the first-confirmation step (status pending), a new invoice follows after the customer and the owner confirm it again."""
     with _lock:
         rows = orders()
         r = next((x for x in rows if int(x["order_id"]) == int(oid)), None)
@@ -3086,7 +3284,7 @@ def undo_orders_edit():
     last = bs[-1]
     with _lock:
         if P("orders.csv").exists():
-            shutil.copy(P("orders.csv"), order_backup_path("_before_undo"))
+            shutil.copy(P("orders.csv"), P("order_backups") / f"undone_{now():%Y%m%d_%H%M%S_%f}.csv")  # outside the orders_*.csv pattern, so a second undo goes one edit further back
         shutil.copy(last, P("orders.csv"))
     last.unlink()
     return f"Restored orders from {last.name} ({len(orders())} orders)."
@@ -3251,11 +3449,11 @@ def health_checks():
     """How the agent (Leyla) is doing, in plain words, for her card: [{"name", "status": ok | warn | bad | off, "note"}]. Nothing here calls a service: it reads what the agent already knows."""
     out = []
     ago = lambda t: (lambda m: f"{int(m)} min ago" if m < 120 else f"{m / 60:.0f} h ago")((time.time() - t) / 60)
-    for kind, label, conf in (("openai", "AI brain", bool(cfg("OPENAI_API_KEY"))), ("whatsapp", "WhatsApp", bool(cfg("WAHA_API_KEY") or (cfg("WHATSAPP_TOKEN") and cfg("PHONE_NUMBER_ID")))), ("telegram", "Telegram", bool(cfg("TELEGRAM_TOKEN")))):
+    for kind, label, conf in (("openai", "AI brain", bool(cfg("OPENAI_API_KEY"))), ("whatsapp", "WhatsApp", bool(cfg("WHATSAPP_TOKEN") and cfg("PHONE_NUMBER_ID")))):
         n = _fails.get(kind, (0, 0))[0]
         if not conf:
             out.append({"name": label, "status": "bad" if kind == "openai" else "off", "note": "no key set" if kind == "openai" else "not connected"})
-        elif kind == "whatsapp" and not cfg("WAHA_API_KEY") and kget("wa_state"):
+        elif kind == "whatsapp" and kget("wa_state"):
             out.append({"name": label, "status": "bad", "note": kget("wa_state")})
         elif n >= 3:
             out.append({"name": label, "status": "bad", "note": _last_bad.get(kind, (0, "failing"))[1]})

@@ -1,7 +1,7 @@
 """Admin web dashboard: orders, payments, CRM. Login with username + password; only the leader admin creates accounts.
 Every action that concerns a customer goes through the same functions the WhatsApp admin chat uses (agent.decide, confirm_payment, ...), so the customer gets the same WhatsApp message.
-Open /dashboard. The first start creates the leader account admin@kibris (password 1234): change it from the Users tab."""
-import asyncio, atexit, hashlib, hmac, json, os, re, secrets, shutil, subprocess, sys, tempfile, threading, time
+Open /dashboard. The first start creates the leader account admin (password admin123): change it from the Users tab."""
+import asyncio, atexit, hashlib, hmac, json, os, re, secrets, shutil, signal, subprocess, sys, tempfile, threading, time
 from pathlib import Path
 
 import httpx
@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 import agent, core
 
 router = APIRouter()
-LEADER = "admin@kibris"
+LEADER = "admin"
 USERS_LOCK = threading.Lock()  # dash_users.json is read, changed and written back: one change at a time
 SESS, FAILS = {}, {}  # token -> {user, exp, v}; (ip, user) -> [timestamps]. Sessions are also kept in dash_sessions.json, so a server restart does not log anyone out
 TTL = 24 * 3600  # a login lasts 24 hours, counted from the login
@@ -66,7 +66,7 @@ def users():
     p = core.P("dash_users.json")
     if not p.exists():
         salt = secrets.token_hex(16)
-        core.atomic_write(p, json.dumps({LEADER: {"salt": salt, "hash": _hash("1234", salt), "role": "leader", "default": True}}))
+        core.atomic_write(p, json.dumps({LEADER: {"salt": salt, "hash": _hash("admin123", salt), "role": "leader", "default": True}}))
     return json.loads(p.read_text(encoding="utf-8"))
 
 
@@ -231,7 +231,7 @@ def reset_private_assistant_day(user):
 
 @router.post("/api/dash/assistant")
 async def assistant(request: Request):
-    """The global admin chat of the page: the same assistant the owner talks to on WhatsApp / Telegram, answering here. Returns what it said (texts and files)."""
+    """The global admin chat of the page: the same assistant the owner talks to on WhatsApp, answering here. Returns what it said (texts and files)."""
     u = me(request)
     b = await request.json()
     text = str(b.get("text") or "").strip()
@@ -242,6 +242,7 @@ async def assistant(request: Request):
     if not live:
         reset_private_assistant_day(u)
     did = DASH if live else f"{DASH}:{u['name']}"
+    core.kset("adminlang:" + did, ("en", "tr", "ru")[LANG_IDX.get((request.headers.get("x-lang") or "en")[:2], 0)])  # this account's dashboard language is its strict language mode
     core.alog_add("live" if live else "assistant_" + u["name"], "user", text, by=u["name"])
     def work():
         with ASSIST_LOCK:  # one question at a time
@@ -267,7 +268,7 @@ def admin_chat_feed(request: Request, since: int = 0, tail: int = 0, before: int
     start, stop = (max(0, before - 1 - lim), max(0, before - 1)) if before else (since, n) if since else (max(0, n - tail), n) if tail else (0, n)
     rows = core.alog_slice("live", start, stop)[1]
     acct = {core.canon_phone(x["phone"]): nm for nm, x in users().items() if x.get("phone")}
-    who = lambda by: by if by in users() else acct.get(core.canon_phone(by), by) if by else ""  # a WhatsApp / Telegram number is shown as the account that owns it
+    who = lambda by: by if by in users() else acct.get(core.canon_phone(by), by) if by else ""  # a WhatsApp number is shown as the account that owns it
     ev = [{"id": i + 1, "ts": e["ts"][5:16].replace("T", " "), "to": {"user": "me", "assistant": "assistant"}.get(e["role"], "alert"), "by": who(e.get("by")) if e["role"] == "user" else "agent", "kind": e["kind"], "body": e["body"], "file": e.get("file")}
           for i, e in rows]
     return {"events": ev, "next": n, "more": bool(ev) and ev[0]["id"] > 1}
@@ -366,7 +367,7 @@ async def team_edit(user: str, request: Request):
         if key in b:
             d[user][field] = " ".join(str(b[key]).split())[:n]  # the nickname is free text (spaces, any case): it is the name on the card, the username stays the login
             d[user].pop("display", None)
-    if "phone" in b:  # the number this person writes to the admin chat from (WhatsApp / Telegram): their messages there are shown under this account
+    if "phone" in b:  # the number this person writes to the admin chat from (WhatsApp): their messages there are shown under this account
         raw = str(b["phone"] or "").strip()
         if not raw:
             d[user].pop("phone", None)
@@ -803,7 +804,7 @@ def catalog(request: Request, q: str = "", category: str = "", lang: str = "tr")
 
 
 def _first_photo(pid):
-    return next(iter(sorted(f for f in (core.ROOT / "dl/data/catalog" / Path(pid).name).glob("*.*") if f.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"))), None)
+    return core.catalog_photo(pid)
 
 
 def _img(path, w, v):
@@ -940,7 +941,9 @@ async def own_add(request: Request):
         price = core.parse_amount(b["price"])
     except ValueError:
         raise HTTPException(400, "the price must be a number")
-    cid = core.add_custom(str(b["name"]), price, str(b["category"]), str(b["description"]), str(b.get("colors") or ""), str(b.get("link") or ""))
+    import asyncio
+    names_ = await asyncio.to_thread(agent.translate_names, str(b["name"]))
+    cid = core.add_custom(str(b["name"]), price, str(b["category"]), str(b["description"]), str(b.get("colors") or ""), str(b.get("link") or ""), names=names_)
     extra = {k: b[k] for k in ("same_day", "old_price") if k in b}
     if extra:
         c = core.customs()
@@ -1068,17 +1071,42 @@ async def item_reset(pid: str, request: Request):
 
 
 # ------------------------------------------------------------------ simulation sandbox
-# A second copy of the app in TEST mode (no WhatsApp / Telegram tokens, its own empty state folder, listening only on 127.0.0.1). The dashboard shows its simulation page
+# A second copy of the app in TEST mode (no WhatsApp tokens, its own empty state folder, listening only on 127.0.0.1). The dashboard shows its simulation page
 # through the /sandbox proxy below, so a simulated customer can never reach a real customer, a real order or the real chat history.
-SB = {"proc": None}
+SB = {"proc": None, "pid": None}
 SB_LOCK = asyncio.Lock()  # two clicks on "start" must not start two processes
 SB_PORT = int(os.environ.get("SANDBOX_PORT", "8001"))
 SB_DIR = Path(tempfile.gettempdir()) / "flowers-sandbox-state"
 
 
+def _sb_pid_matches(pid):
+    """Only manage this project's isolated, channel-disabled simulation process."""
+    try:
+        proc = Path("/proc") / str(pid)
+        args = (proc / "cmdline").read_bytes().decode().split("\0")
+        env = dict(x.split("=", 1) for x in (proc / "environ").read_bytes().decode().split("\0") if "=" in x)
+        channels = ("WHATSAPP_TOKEN", "PHONE_NUMBER_ID")
+        return (int(pid) != os.getpid() and "app:app" in args and "--port" in args
+                and args[args.index("--port") + 1] == str(SB_PORT)
+                and (proc / "cwd").resolve() == core.ROOT.resolve()
+                and Path(env.get("STATE_DIR", "")).resolve() == SB_DIR.resolve()
+                and all(env.get(key) == "" for key in channels)
+                and "\nState:\tZ" not in (proc / "status").read_text())
+    except (OSError, ValueError, IndexError):
+        return False
+
+
+def _sb_attach():
+    for proc in Path("/proc").iterdir():
+        if proc.name.isdigit() and _sb_pid_matches(proc.name):
+            SB["pid"] = int(proc.name)
+            return True
+    return False
+
+
 def _sb_running():
     p = SB["proc"]
-    return bool(p and p.poll() is None)
+    return bool(p and p.poll() is None) or bool(SB.get("pid") and _sb_pid_matches(SB["pid"]))
 
 
 def _sb_up():
@@ -1096,7 +1124,19 @@ def _sb_stop(reset=False):
             p.wait(timeout=10)
         except Exception:
             p.kill()
+    pid = SB.get("pid")
+    if pid and _sb_pid_matches(pid):
+        try:
+            os.kill(pid, signal.SIGTERM)
+            deadline = time.monotonic() + 10
+            while _sb_pid_matches(pid) and time.monotonic() < deadline:
+                time.sleep(0.1)
+            if _sb_pid_matches(pid):
+                os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
     SB["proc"] = None
+    SB["pid"] = None
     if reset:
         shutil.rmtree(SB_DIR, ignore_errors=True)
 
@@ -1126,7 +1166,7 @@ def _sb_spawn():
     for f in ("overrides.json", "custom.json", "removed.json", "prices.json"):  # the shop's own edits and its stored prices are copied, so the simulation sees the same catalog and can place orders
         if core.P(f).exists():
             shutil.copy(core.P(f), SB_DIR / f)
-    env = {**os.environ, "STATE_DIR": str(SB_DIR), "WAHA_API_KEY": "", "WAHA_WEBHOOK_SECRET": "", "WHATSAPP_TOKEN": "", "PHONE_NUMBER_ID": "", "TELEGRAM_TOKEN": "", "TELEGRAM_SECRET": "", "PUBLIC_URL": "", "ADMIN_TELEGRAM": "", "DAILY_REFRESH": "0",
+    env = {**os.environ, "STATE_DIR": str(SB_DIR), "WHATSAPP_TOKEN": "", "PHONE_NUMBER_ID": "", "PUBLIC_URL": "", "DAILY_REFRESH": "0",
            "SANDBOX_PRELOAD": "0", "DL_PRELOAD": "0"}  # (the sandbox never starts a sandbox of its own, and does not load the photo model)
     SB["proc"] = subprocess.Popen([sys.executable, "-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", str(SB_PORT)], cwd=str(core.ROOT), env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -1139,6 +1179,9 @@ def sandbox_preload():
 async def _sandbox_start(u):
     if not _sb_running():
         if await asyncio.to_thread(_sb_up):
+            if await asyncio.to_thread(_sb_attach):
+                core.log(f"dashboard: {u['name']} reconnected the existing simulation sandbox")
+                return {"running": True}
             raise HTTPException(409, f"something else is already using port {SB_PORT}")
         await asyncio.to_thread(_sb_spawn)
         core.log(f"dashboard: {u['name']} started the simulation sandbox")
@@ -1395,9 +1438,9 @@ async def edit_order(oid: int, request: Request):
 
 ITEM_NOTE = {  # what the customer is asked after the team changed their items, by stage (en, tr, ru)
     "open": ("Please have a look: if it is all right, tell me and the team will confirm it.", "Lütfen bir göz atın: uygunsa bana yazın, ekibimiz onaylasın.", "Посмотрите, пожалуйста: если всё верно, напишите мне, и команда подтвердит."),
-    "unpaid": ("The first quotation no longer counts. Please check it and tell me if it is right: the team confirms it again and sends you a new quotation.",
-               "İlk teklif artık geçerli değil. Lütfen kontrol edin, doğruysa bana yazın: ekibimiz yeniden onaylayıp size yeni bir teklif göndersin.",
-               "Первое предложение больше не действует. Проверьте, пожалуйста, и напишите, если всё верно: команда снова подтвердит и пришлёт новое предложение."),
+    "unpaid": ("The first invoice no longer counts. Please check it and tell me if it is right: the team confirms it again and sends you a new invoice.",
+               "İlk fatura artık geçerli değil. Lütfen kontrol edin, doğruysa bana yazın: ekibimiz yeniden onaylayıp size yeni bir fatura göndersin.",
+               "Первый счёт больше не действует. Проверьте, пожалуйста, и напишите, если всё верно: команда снова подтвердит и пришлёт новый счёт."),
 }
 
 
@@ -1472,7 +1515,7 @@ async def edit_items(oid: int, request: Request):
     if st in core.OPEN:  # not confirmed yet: applied at once
         row, _, _ = core.order_set_lines(oid, [({"name": n, "price": un}, q) for n, q, un in lines], custom_items=custom_text if custom_changed else None, custom_price=custom_total if custom_changed else None)
         why, stage = core.change_explain(cur, row, lang), "open"
-    elif st in ("awaiting_payment", "payment_review"):  # quotation sent, payment not confirmed: back to the confirmation step, a new quotation follows
+    elif st in ("awaiting_payment", "payment_review"):  # invoice sent, payment not confirmed: back to the confirmation step, a new invoice follows
         if not core.request_change(oid, ph, req):
             raise HTTPException(409, tx(request, "not_changed"))
         row, _, why_not = core.change_apply(oid, requote=True)
@@ -1534,11 +1577,11 @@ async def crm_cards(request: Request):
 
 
 @router.get("/api/dash/orders/{oid}/pdf")
-def order_pdf(oid: int, request: Request, kind: str = "quotation", inline: int = 0):
-    """The quotation or invoice of an order as a PDF for the admin to open (it is built from the order as it is now)."""
+def order_pdf(oid: int, request: Request, kind: str = "invoice", inline: int = 0):
+    """The invoice or receipt of an order as a PDF for the admin to open (it is built from the order as it is now)."""
     me(request)
-    if kind not in ("quotation", "invoice"):
-        raise HTTPException(400, "kind must be quotation or invoice")
+    if kind not in ("invoice", "receipt"):
+        raise HTTPException(400, "kind must be invoice or receipt")
     import docs_pdf
     r = one(oid)
     return FileResponse(docs_pdf.build(r, kind, "tr" if agent.lang_of(r["customer_number"]) == 1 else "en"), media_type="application/pdf", filename=f"{kind}_{oid}.pdf", content_disposition_type="inline" if inline else "attachment")

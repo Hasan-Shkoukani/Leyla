@@ -40,9 +40,9 @@ def extract_text(kind, data=None, filename="", text="", ocr=None):
 
 def _amounts(text):
     out = []
-    for m in re.findall(r"\d[\d.,\s]*\d|\d", text):
+    for m in re.findall(r"\d{1,3}(?:[.,\u00a0 ]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?", text):  # one number: separators only inside it, never across a line or a column gap
         try:
-            out.append(Decimal(str(core.parse_amount(m.replace(" ", "")))).quantize(Decimal("0.01")))
+            out.append(Decimal(str(core.parse_amount(m.replace(" ", "").replace("\u00a0", "")))).quantize(Decimal("0.01")))
         except (ValueError, ArithmeticError):
             pass
     return out
@@ -88,21 +88,22 @@ def check(text, row, now=None):
     # receiving account
     if iban in flat:
         res["account"] = True
+    elif ibans:  # another IBAN on the receipt is a wrong account, even when our holder's name is written next to it
+        res["account"] = False
+        notes.append(f"account: the receipt shows another IBAN (ending {ibans[0][-4:]}), ours ends {iban[-4:]}")
     elif holder and all(w in t for w in holder):
         res["account"] = True
         notes.append("account: the holder name matches, the IBAN is not shown")
-    elif ibans:
-        res["account"] = False
-        notes.append(f"account: the receipt shows another IBAN (ending {ibans[0][-4:]}), ours ends {iban[-4:]}")
     # date: not before the order was placed, not in the future
     placed = datetime.fromisoformat(row["timestamp"]).date() if row.get("timestamp") else now.date() - timedelta(days=30)
-    ds = _dates(text or "", now.date())
+    ds = _dates(t, now.date())
     if ds:
         okd = [d for d in ds if placed <= d <= now.date() + timedelta(days=1)]
         res["date"] = bool(okd)
         if not okd:
             notes.append(f"date: {ds[0]:%d.%m.%Y} is " + ("before the order was placed" if ds[0] < placed else "in the future"))
-    res["own"] = bool(re.search(r"quotation\s*/\s*teklif|sales order\s*/\s*satis siparisi|invoice\s*/\s*fatura|\b(q|so|inv)-\d{5}\b", t))  # the customer sent back the document WE sent
+    res["own"] = bool(re.search(r"order request\s*/\s*siparis talebi|invoice\s*/\s*fatura|receipt\s*/\s*tahsilat makbuzu|\b(or|inv|rct)-\d{5}\b"  # the customer sent back a document WE sent
+                                r"|quotation\s*/\s*teklif|sales order\s*/\s*satis siparisi|\b(q|so)-\d{5}\b", t))  # shortcut: the old titles stay recognised, customers still hold PDFs sent before the rename
     res["relevant"] = (bool(KEYWORDS.search(t)) or res["amount"] is not None or res["account"] is not None or bool(ibans)) and not res["own"]
     res["notes"] = notes
     if not res["relevant"]:

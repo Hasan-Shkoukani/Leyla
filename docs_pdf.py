@@ -1,4 +1,4 @@
-"""Quotation (sent at the owner's first confirmation, with the bank details) and invoice (sent after the owner confirms the payment) as PDFs, always in English AND Turkish (lang "bi").
+"""Invoice (sent at the owner's first confirmation, with the bank details) and receipt (sent after the owner confirms the payment) as PDFs, always in English AND Turkish (lang "bi").
 doc_data() is the content, build() draws it; both are pure code, no model. Font: DejaVu Sans (data/fonts), which has the Turkish letters."""
 from pathlib import Path
 
@@ -8,7 +8,7 @@ import core
 
 FONTS = core.ROOT / "data/fonts"
 L = {  # label -> (en, tr)
-    "quotation": ("QUOTATION", "TEKLİF"), "invoice": ("INVOICE", "FATURA"), "no": ("No.", "No"), "date": ("Date", "Tarih"),
+    "invoice": ("INVOICE", "FATURA"), "receipt": ("RECEIPT", "TAHSİLAT MAKBUZU"), "no": ("No.", "No"), "date": ("Date", "Tarih"),
     "customer": ("Customer", "Müşteri"), "delivery_to": ("Delivery to", "Teslimat"), "when": ("Delivery date", "Teslimat tarihi"),
     "item": ("Item", "Ürün"), "qty": ("Qty", "Adet"), "unit": ("Unit price", "Birim fiyat"), "total": ("Total", "Tutar"),
     "goods": ("Items total", "Ürün toplamı"), "delivery": ("Delivery", "Teslimat"), "free": ("free", "ücretsiz"),
@@ -16,7 +16,7 @@ L = {  # label -> (en, tr)
     "bank": ("Bank transfer details", "Banka havale bilgileri"), "holder": ("Account holder", "Hesap sahibi"), "bankname": ("Bank", "Banka"),
     "iban": ("IBAN", "IBAN"), "paid": ("PAID", "ÖDENDİ"), "paidamt": ("Amount paid", "Ödenen tutar"), "thanks": ("Thank you for your order.", "Siparişiniz için teşekkürler."),
     "order": ("Order", "Sipariş"), "notes": ("Note", "Not"),
-    "salesorder": ("SALES ORDER", "SATIŞ SİPARİŞİ"), "sender": ("Sender", "Gönderen"), "recipient": ("Recipient", "Alıcı"), "address": ("Address", "Adres"),
+    "orderrequest": ("ORDER REQUEST", "SİPARİŞ TALEBİ"), "sender": ("Sender", "Gönderen"), "recipient": ("Recipient", "Alıcı"), "address": ("Address", "Adres"),
     "dtype": ("Delivery type", "Teslimat türü"), "status": ("Status", "Durum"), "giftnote": ("Card note", "Kart notu"), "waiting": ("Waiting for your first confirmation", "İlk onayınız bekleniyor"),
     "normal": ("normal", "normal"), "jet": ("jet", "jet"), "pickup": ("pick-up at the shop", "mağazadan teslim"),
 }
@@ -33,13 +33,13 @@ def both(en, tr):
 
 
 def info(row, kind, lang):
-    """The detail rows above the item table: (label key, value). The sales order (for the owner) carries every detail of the order form."""
+    """The detail rows above the item table: (label key, value). The order request (for the owner) carries every detail of the order form."""
     who = lambda n, ph: " · ".join(x for x in (n, core.plus(ph) if ph else "") if x)
     cust = f"{row['customer_name'] or ''} {core.plus(row['customer_number'])}".strip()
     area = (core._json("delivery.json")["areas"].get(row["delivery_area"]) or {})
-    delivery_time = row["delivery_time"] or (area.get("departure", "") if (row["delivery_type"] or "normal") == "normal" else "")
+    delivery_time = (row["delivery_time"] + (f" (≤ {core.before_of(row)})" if core.before_of(row) else "") if row["delivery_time"] else "") or (area.get("departure", "") if (row["delivery_type"] or "normal") == "normal" else "")
     when = f"{row['delivery_date']} {delivery_time}".strip()
-    if kind != "salesorder":
+    if kind != "orderrequest":
         return [("customer", cust), ("delivery_to", ", ".join(x for x in (row["recipient_name"], core.plus(row["recipient_phone"]) if row["recipient_phone"] else "", row["address"] if not row["address"].startswith("PICKUP") else "") if x)),
                 ("when", when), ("dtype", t(row["delivery_type"] or "normal", lang)), ("order", f"#{row['order_id']}")]
     notes = " · ".join(dict.fromkeys(x.strip().removeprefix("note:").strip() for x in (row["notes"] or "").split("|") if x.strip().startswith("note:")))
@@ -51,7 +51,7 @@ def info(row, kind, lang):
 
 
 def doc_data(row, kind, lang):
-    """kind = quotation | invoice -> everything that goes on the page, as plain data (so it can be tested without opening the PDF)."""
+    """kind = invoice | receipt -> everything that goes on the page, as plain data (so it can be tested without opening the PDF)."""
     biz, pay, D = core.business_info(), core._json("payment.json"), core.D
     by_name = {core._nm(p["name"]): p for p in core.graph()[0].values() if p.get("type") == "product"}
     name_ = lambda nm: (both(core.display(by_name[nm], "en"), core.display(by_name[nm], "tr")) if lang == "bi" else core.display(by_name[nm], lang)) if nm in by_name else nm
@@ -63,14 +63,14 @@ def doc_data(row, kind, lang):
     a = areas.get(row["delivery_area"])
     detail_rows = info(row, kind, lang)
     return {
-        "kind": kind, "title": t(kind, lang), "number": f"{ {'quotation': 'Q', 'invoice': 'INV', 'salesorder': 'SO'}[kind] }-{int(row['order_id']):05d}", "date": core.now().strftime("%d.%m.%Y"),
+        "kind": kind, "title": t(kind, lang), "number": f"{ {'invoice': 'INV', 'receipt': 'RCT', 'orderrequest': 'OR'}[kind] }-{int(row['order_id']):05d}", "date": core.now().strftime("%d.%m.%Y"),
         "shop": [biz.get("company") or biz.get("name", ""), biz.get("address", ""), " · ".join(x for x in (biz.get("phone"), biz.get("email")) if x), biz.get("website", "")],
         "customer": f"{row['customer_name'] or ''} {core.plus(row['customer_number'])}".strip(),
         "delivery_to": ", ".join(x for x in (row["recipient_name"], core.plus(row["recipient_phone"]) if row["recipient_phone"] else "", row["address"] if not row["address"].startswith("PICKUP") else "") if x),
         "when": dict(detail_rows)["when"],
         "items": items, "goods": row["total"], "delivery_label": (both(a["label"]["en"], a["label"]["tr"]) if lang == "bi" else a["label"]["tr" if lang == "tr" else "en"]) if a else "", "delivery_fee": row["delivery_fee"],
         "adjustment": adj, "payable": row["payable"], "paid": row["paid"],
-        "bank": {"holder": pay["holder"], "bank": pay["bank"], "iban": pay["iban"], "extra": pay.get("extra", ""), "receipt": both(pay["receipt_line"]["en"], pay["receipt_line"]["tr"]) if lang == "bi" else pay["receipt_line"]["tr" if lang == "tr" else "en"]} if kind == "quotation" else None,
+        "bank": {"holder": pay["holder"], "bank": pay["bank"], "iban": pay["iban"], "extra": pay.get("extra", ""), "receipt": both(pay["receipt_line"]["en"], pay["receipt_line"]["tr"]) if lang == "bi" else pay["receipt_line"]["tr" if lang == "tr" else "en"]} if kind == "invoice" else None,
         "order": f"#{row['order_id']}",
         "info": detail_rows,
     }
@@ -124,11 +124,11 @@ def build(row, kind, lang, out=None):
     if d["adjustment"]:
         row_(t("fee" if d["adjustment"] > 0 else "discount", lang), ("+" if d["adjustment"] > 0 else "-") + core.fmt_tl(abs(d["adjustment"])))
     pdf.ln(1); pdf.set_text_color(*plum); row_(t("topay", lang), core.fmt_tl(d["payable"] or 0), True); pdf.set_text_color(30, 30, 30)
-    if kind == "invoice":
+    if kind == "receipt":
         pdf.ln(3); pdf.set_font("DV", "B", 22 if bi else 26); pdf.set_text_color(40, 140, 80); pdf.cell(0, 14, t("paid", lang), align="R", new_x="LMARGIN", new_y="NEXT")
         pdf.set_font("DV", "", 10); pdf.set_text_color(30, 30, 30); pdf.cell(0, 6, f"{t('paidamt', lang)}: {core.fmt_tl(d['paid'] or d['payable'] or 0)}", align="R", new_x="LMARGIN", new_y="NEXT")
         pdf.ln(6); pdf.cell(0, 6, t("thanks", lang), new_x="LMARGIN", new_y="NEXT")
-    elif kind == "quotation":
+    elif kind == "invoice":
         b = d["bank"]; pdf.ln(6); pdf.set_fill_color(248, 244, 247); pdf.set_font("DV", "B", 11); pdf.cell(0, 8, t("bank", lang), fill=True, new_x="LMARGIN", new_y="NEXT")
         for k, v in (("holder", b["holder"]), ("bankname", b["bank"]), ("iban", b["iban"] + (f"  {b['extra']}" if b["extra"] else ""))):
             pdf.set_font("DV", "", 10); pdf.cell(60 if bi else 38, 7, t(k, lang)); pdf.set_font("DV", "B", 10); pdf.cell(0, 7, v, new_x="LMARGIN", new_y="NEXT")
@@ -140,7 +140,7 @@ def build(row, kind, lang, out=None):
 
 
 def build_report(kind="day", today=None, out=None):
-    """The day / week / month report as a PDF in the same style as the quotation and the invoice (English and Turkish), ending with a Turkish encouraging line."""
+    """The day / week / month report as a PDF in the same style as the invoice and the receipt (English and Turkish), ending with a Turkish encouraging line."""
     import random
     D_ = core.report_data(kind, today)
     pdf = FPDF(format="A4")

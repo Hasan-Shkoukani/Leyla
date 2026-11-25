@@ -9,7 +9,11 @@
    },
    "names": [
     "girne",
-    "kyrenia"
+    "kyrenia",
+    "كيرينيا",
+    "كيرنيا",
+    "Кирения",
+    "Гирне"
    ],
    "minimum": 1000,
    "jet_fee": 500,
@@ -23,7 +27,11 @@
    "names": [
     "lefkoşa",
     "lefkosa",
-    "nicosia"
+    "nicosia",
+    "نيقوسيا",
+    "ليفكوشا",
+    "Никосия",
+    "Лефкоша"
    ],
    "minimum": 1000,
    "jet_fee": 1000,
@@ -67,7 +75,11 @@
     "gazimagusa",
     "mağusa",
     "magusa",
-    "famagusta"
+    "famagusta",
+    "فاماغوستا",
+    "ماغوسا",
+    "Фамагуста",
+    "Газимагуса"
    ],
    "minimum": 2000,
    "jet_fee": 2000,
@@ -81,7 +93,10 @@
    "names": [
     "güzelyurt",
     "guzelyurt",
-    "morphou"
+    "morphou",
+    "مورفو",
+    "Морфу",
+    "Гюзельюрт"
    ],
    "minimum": 2000,
    "jet_fee": 1500,
@@ -95,7 +110,11 @@
    "names": [
     "iskele",
     "bafra",
-    "trikomo"
+    "trikomo",
+    "إسكيلي",
+    "اسكيلي",
+    "Искеле",
+    "Бафра"
    ],
    "minimum": 2500,
    "jet_fee": 2500,
@@ -109,7 +128,9 @@
    "names": [
     "lefke",
     "gemikonağı",
-    "gemikonagi"
+    "gemikonagi",
+    "ليفكي",
+    "Лефке"
    ],
    "minimum": 2500,
    "jet_fee": 2000,
