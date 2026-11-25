@@ -8910,3 +8910,18 @@ def test_price_by_quantity_and_delivery_by_area_are_answered_by_code_without_the
     kind, body = fast.answer(CUST, "do you deliver to Kyrenia?")
     assert "Girne (Kyrenia)" in body and "500 TL" in body and "1,000 TL" in body
     assert "Evet" in fast.answer(CUST, "Girne teslimat var mı")[1]
+
+
+def test_open_suggestions_and_turkish_delivery_typos_are_answered_by_code(monkeypatch):
+    import fast
+    cat = {str(i): {"id": str(i), "name": f"Urun {i}", "name_en": f"Item {i}", "colors": []} for i in range(1, 8)}
+    monkeypatch.setattr(core, "badge_products", lambda c: list(cat.values()))
+    monkeypatch.setattr(core, "find_flowers", lambda **kw: [{"id": "1"}, {"id": "2"}] if kw.get("max_price") == 1500 else [])
+    monkeypatch.setattr(core, "product", lambda i: cat.get(i))
+    monkeypatch.setattr(core, "live_prices", lambda ps, show=False: {p["id"]: {"price": 900, "in_stock": True} for p in ps})
+    kind, ps = fast.answer(CUST, "a gift for my mum's birthday, around 1500 TL, what do you recommend?")
+    assert kind == "options" and [p["id"] for p in ps] == ["1", "2"]  # near the named budget
+    kind, ps = fast.answer(CUST, "what do you recommend?")
+    assert kind == "options" and len(ps) == 5  # no budget: the shop's own collection
+    assert fast.answer(CUST, "I want to order a gift for my mum, deliver tomorrow") is None  # an order with details is the model's
+    assert "Gazimağusa" in fast.answer(CUST, "magusaya teslımat var mı")[1]

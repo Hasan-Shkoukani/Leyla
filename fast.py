@@ -86,6 +86,26 @@ PRICE_WORDS = re.compile(r"\b(price|cost|how much|fiyat\w*|ne kadar|kaç|kac)\b"
 DELIVER_Q = re.compile(r"\b(deliver\w*|delivery|teslimat\w*|g[oö]nder\w*)\b", re.I)
 
 
+SUGGEST = re.compile(r"\b(recommend\w*|suggest\w*|gifts?|birthday|anniversary|mum|mom|mother|wife|girlfriend|romantic|oner\w*|hediye|dogum gunu|yildonumu|anne\w*|tavsiye\w*)\b", re.I)
+SUGGEST_NOT = re.compile(r"\b(order|deliver\w*|pay\w*|address|note|card|photo|status|cancel|change|refund)\b|sipari|teslim|ödeme|odeme|adres|iptal|\d{6,}", re.I)
+AROUND = re.compile(r"(?:around|about|approx\w*|roughly|~|civar\w*|yaklaşık|yaklasik)\s*(\d[\d.,]*)\s*(?:tl|try|₺|lira)?", re.I)
+
+
+def _suggestions(text):
+    """Up to 5 products for an open 'what do you recommend / a gift for X' message: near the budget if one is named (under N, or around N: 60%-100% of it), else the shop's heartfelt / popular collection. [] = let the model handle it."""
+    t = text.strip()
+    amt = (BUDGET_MAX.search(t) or AROUND.search(t))
+    if amt:
+        top = _num(amt.group(1))
+        hits = core.find_flowers(query="", max_price=top, min_price=top * 0.6, limit=5, sort="price_desc")
+    else:
+        coll = collection_for(t) or ("heartfelt" if re.search(r"gift|hediye|romantic|birthday|anniversary|dogum|yildonumu", fold(t)) else "bestSeller")
+        pool = sorted(core.badge_products(coll), key=lambda n: n["name"])
+        es = core.live_prices(pool[:12], show=True) if pool else {}
+        hits = [p for p in pool[:12] if es.get(p["id"]) and es[p["id"]].get("price") is not None and es[p["id"]].get("in_stock") is not False][:5]
+    return [x for x in (core.product(h["id"]) for h in hits) if x and x.get("available") is not False][:5]
+
+
 def _counted_match(text):
     """'5 red roses': the ONE catalog hit whose name carries that same number as a whole number ('5-Piece', not '15'); None when there is no number or not exactly one such hit."""
     m = re.search(r"(?<![\d.,])(\d{1,3})(?![\d.,])", text)
@@ -138,13 +158,13 @@ def answer(phone, text):
                 if SHOW.search(text):
                     return ("photo", p, cap, "Buyurun 🌸 Beğendiniz mi, sipariş verelim mi?" if tr else "Here it is 🌸 Shall I put it together for you?")
                 return ("text", cap + ("\n\nSipariş verelim mi? 🌸" if tr else "\n\nShall I put it together for you? 🌸"))
-    if not busy and PRICE_WORDS.search(text) and not any(rx.search(text) for _, rx in CURRENCY_WORDS):  # "how much is 5 red roses": ONE product whose name has that exact number is answered by code; anything less clear goes to the model
+    if not busy and PRICE_WORDS.search(fold(text)) and not any(rx.search(text) for _, rx in CURRENCY_WORDS):  # "how much is 5 red roses": ONE product whose name has that exact number is answered by code; anything less clear goes to the model
         p = _counted_match(text)
         e = core.live_prices([p], show=True).get(p["id"]) if p else None
         if e and e.get("price") is not None and e.get("in_stock") is not False:
             return ("text", f"{core.display(p, 'tr' if tr else 'en')} - {core.fmt_tl(e['price'])}\n{p.get('url') or ''}".strip() + ("\n\nSipariş verelim mi? 🌸" if tr else "\n\nShall I put it together for you? 🌸"))
-    if not busy and DELIVER_Q.search(text) and not NOT_SIMPLE.search(text):  # "do you deliver to Kyrenia?": the area's rules, straight from delivery.json
-        key = core.detect_area(text)
+    if not busy and DELIVER_Q.search(fold(text)) and not NOT_SIMPLE.search(text):  # "do you deliver to Kyrenia?": the area's rules, straight from delivery.json
+        key = core.detect_area(text) or core.detect_area(" ".join(re.sub(r"y[ae]$", "", w) for w in fold(text).split()))  # Turkish "to": magusaya, girneye
         a = core._json("delivery.json")["areas"].get(key) if key else None
         if a:
             label = a["label"].get("tr" if tr else "en") or a["label"]["en"]
@@ -152,6 +172,10 @@ def answer(phone, text):
             if tr:
                 return ("text", f"Evet, {label} bölgesine teslimat yapıyoruz 🌸 Normal teslimat ücretsiz ve {a['departure']}'de çıkıyor" + (f"; belirli saatte (jet) teslimat +{jet}" if jet else "; jet ücretini ekibimiz teyit eder") + f". Minimum sipariş {core.fmt_tl(a['minimum'])} (sadece ürünler).")
             return ("text", f"Yes, we deliver to {label} 🌸 Normal delivery is free and leaves at {a['departure']}" + (f"; jet delivery to a specific time is +{jet}" if jet else "; the team confirms the jet fee") + f". Minimum order is {core.fmt_tl(a['minimum'])} in products.")
+    if not busy and len(text) <= 160 and SUGGEST.search(fold(text)) and not SUGGEST_NOT.search(text) and not any(rx.search(text) for _, rx in CURRENCY_WORDS):  # "a gift for my mum around 1500 TL", "what do you recommend?": the options come from code, no model
+        picks = _suggestions(text)
+        if picks:
+            return ("options", picks)
     if not busy and not SHOW.search(text) and search_hint(phone, text) and not any(rx.search(text) for _, rx in CURRENCY_WORDS):
         plan = plan_search(text)
         hits = core.find_flowers(**plan) if plan else []
