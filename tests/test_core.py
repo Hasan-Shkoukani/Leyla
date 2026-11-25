@@ -51,11 +51,22 @@ def fake(*texts):
     return Fake(responses=[t if isinstance(t, AIMessage) else AIMessage(t) for t in texts])
 
 
+def stand_in_intent(text):
+    """Test double for the LLM judgment of the owner's answer (production asks the model; tests must not): yes / no / other with the negations the model is told about."""
+    own = re.sub(r"^\(replying to this earlier message: «.*?»\)\s*", "", text or "", flags=re.S).strip()
+    if not own:
+        return "yes"
+    if re.search(r"onaylama|onaylam[ıi]yor|olmaz|\b(not|no|never|don'?t|wrong|invalid|fake|invoice|quote|decline\w*|reject\w*|cancel\w*|unclear|missing|still need)\b|hay[ıi]r|geçersiz", own, re.I) and not re.search(r"\b(meant|mean)\b", own, re.I):
+        return "no"
+    return "yes" if agent.OK_WORDS.search(own) else "other"
+
+
 @pytest.fixture(autouse=True)
 def env(tmp_path, monkeypatch):
+    monkeypatch.setattr(agent, "owner_intent", stand_in_intent)
     for k, v in dict(STATE_DIR=str(tmp_path), GRAPH_PATH=str(tmp_path / "graph.json"), ADMIN_NUMBERS=ADMIN,
                      DEBOUNCE_SECONDS="0.05", LIST_CONFIRM="0", NOTIFY_ASYNC="0", RESEND_CHECK="0", DATE_RULES="0", REQUIRE_DELIVERY_CHOICE="0", CHARACTER_AUTO="0", DL_PRELOAD="0", SANDBOX_PRELOAD="0", WA_CHECK="0", MAX_TEXT_CHARS="2000", MAX_VOICE_SECONDS="300", VISION_DAILY_CAP="10",
-                     RATE_MESSAGES="1000", META_TEST_MODE="0", WAHA_API_KEY="", WAHA_WEBHOOK_SECRET="", WHATSAPP_TOKEN="", PHONE_NUMBER_ID="", TELEGRAM_TOKEN="", TELEGRAM_SECRET="", PUBLIC_URL="", ADMIN_TELEGRAM="").items():  # tests never touch the real channels in .env
+                     RATE_MESSAGES="1000", INTERPRET="0", META_TEST_MODE="0", WAHA_API_KEY="", WAHA_WEBHOOK_SECRET="", WHATSAPP_TOKEN="", PHONE_NUMBER_ID="", TELEGRAM_TOKEN="", TELEGRAM_SECRET="", PUBLIC_URL="", ADMIN_TELEGRAM="").items():  # tests never touch the real channels in .env
         monkeypatch.setenv(k, v)
     build_graph.main(ROOT / "data/raw/site.sample.json", tmp_path / "graph.json")
     # prices are never in the graph: serve them from a fake "website" (url -> price) that tests can change like a shop owner would
@@ -229,6 +240,7 @@ def test_admin_auth_by_number():
 
 
 def test_admin_tools_mute_message_note_auto():
+    agent.LLM = fake("Your flowers are on the way")
     at()["mute_customer"].invoke({"customer_number": CUST, "mute": True})
     assert core.q("SELECT 1 FROM paused WHERE phone=?", CUST)
     at()["mute_customer"].invoke({"customer_number": CUST, "mute": False})
@@ -344,6 +356,69 @@ def tools(phone=CUST):
     return {t.name: t for t in agent.make_tools(phone, "Ayse")}
 
 
+@pytest.mark.parametrize("action", ["", "replace", "keep"])
+def test_custom_quote_catalog_choice_uses_last_displayed_item_without_silent_merge(action):
+    products = list({core._nm(p["name"]): p for p in core.graph()[0].values()
+                     if p.get("type") == "product" and p.get("available") is not False}.values())[:3]
+    oid = core.order_create(CUST, "Ayse", [], "", "", "", custom="a custom gold ribbon bouquet")
+    st = {"text": "tamam son attığınız olsun", "suggestions": [
+        {"position": i, "id": p["id"], "name": p["name"]} for i, p in enumerate(products, 1)]}
+    tool = {t.name: t for t in agent.make_tools(CUST, "Ayse", st)}["select_suggestions"]
+    result = tool.invoke({"picks": [{"last": 1}], "custom_action": action})
+    row = core.order_row(oid)
+    if not action:
+        assert result.startswith("NOT PLACED") and not row["items"] and row["custom_items"]
+        assert not st.get("option_ids")
+    else:
+        assert [n for n, _, _ in core.row_lines(row)] == [core._nm(products[-1]["name"])]
+        assert bool(row["custom_items"]) == (action == "keep")
+        if action == "keep":
+            assert "Awaiting" in agent.basket_confirmation_reply(row, 0)
+            assert "Awaiting" in agent.basket_add_reply(row, products[-1], 0)
+        else:
+            assert row["total"] and row["status"] == "pending"
+
+
+def test_custom_quote_tool_requests_customer_acknowledgment_instead_of_silence():
+    st = {}
+    tool = {t.name: t for t in agent.make_tools(CUST, "Ayse", st)}["request_quote"]
+    result = tool.invoke({"other_items": "custom gold ribbon bouquet", "confirm_custom": True})
+    assert "QUOTE REQUEST" in result and not st.get("mute")
+    repeated = tool.invoke({"other_items": "custom gold ribbon bouquet", "confirm_custom": True})
+    assert "ALREADY SENT" in repeated and not st.get("mute")
+
+
+def test_photo_matches_require_a_later_choice_before_any_basket_write(monkeypatch):
+    p = next(p for p in core.graph()[0].values() if p.get("type") == "product" and p.get("available") is not False)
+    monkeypatch.setattr(agent.HOOKS, "dl", lambda b: {"matches": [{"product_id": p["id"], "score": .98}], "confident": True})
+    st = {"text": "bundan sipariş verecektim", "photos": {1: {"item": {"data": b"photo", "mime": "image/jpeg"}, "note": None}}}
+    tl = {t.name: t for t in agent.make_tools(CUST, "Ayse", st)}
+    assert "choose" in tl["look_at_photo"].invoke({"photo_number": 1})
+    assert str(p["id"]) in st["offered_options"]
+    for tool, args in (("place_order", {"items": [{"product_id": p["id"], "quantity": 1}]}),
+                       ("select_suggestions", {"positions": [1]}),
+                       ("request_quote", {"other_items": "custom bouquet", "confirm_custom": True})):
+        assert tl[tool].invoke(args).startswith("NOT PLACED")
+        assert not core.orders()
+    next_st = {"text": "ilk seçenek olsun", "suggestions": [{"position": 1, "id": p["id"], "name": p["name"]}]}
+    choice = {t.name: t for t in agent.make_tools(CUST, "Ayse", next_st)}["select_suggestions"]
+    choice.invoke({"positions": [1]})
+    assert core.open_order(CUST)["items"] == core._nm(p["name"])
+
+
+@pytest.mark.parametrize("mixed", [False, True])
+def test_admin_custom_price_is_stored_separately_without_changing_catalog_prices(mixed):
+    p = next(p for p in core.graph()[0].values() if p.get("type") == "product" and p.get("available") is not False)
+    lines = core.priced_lines([(p, 1)], CUST) if mixed else []
+    oid = core.order_create(CUST, "Ayse", lines, "", "", "", custom="custom gold ribbon bouquet")
+    before = core.order_row(oid)
+    total = core.D(before["subtotal"] or 0) + 2500
+    row, error = core.order_price_custom(oid, total)
+    assert not error and core.D(row["custom_price"]) == 2500 and core.D(row["total"]) == total
+    assert row["unit_prices"] == before["unit_prices"] and row["subtotal"] == before["subtotal"]
+    assert core.order_row(oid)["custom_price"] == row["custom_price"]
+
+
 def test_full_order_lifecycle_form_first_confirmation_payment_receipt_final_confirmation():
     r = ready()
     assert "FORM COMPLETE" in r and core.orders()[0]["status"] == "pending" and core.orders()[0]["total"] == "1800"
@@ -368,7 +443,7 @@ def test_full_order_lifecycle_form_first_confirmation_payment_receipt_final_conf
     agent.LLM = fake("Your payment is confirmed, order #1 is final 🌸 1,800 TL")
     at()["confirm_payment_received"].invoke({"order_id": 1})
     assert core.orders()[0]["status"] == "confirmed" and any("1,800 TL" in e["body"] for e in sent(CUST)) and stats()["orders_confirmed"] == "1"
-    assert "may be cancelled" in sent(CUST)[-1]["body"] and "within 24 hours" in sent(CUST)[-1]["body"] and "/en/blog" in sent(CUST)[-1]["body"]  # the shop's policy and blog follow the final confirmation
+    assert "/en/blog" in sent(CUST)[-1]["body"] and "may be cancelled" not in sent(CUST)[-1]["body"]  # only the flower-care blog follows the final confirmation; the cancellation policy is said only when asked
     assert "not waiting" in at()["confirm_payment_received"].invoke({"order_id": 1})
 
 
@@ -383,7 +458,7 @@ def test_reject_at_any_stage_and_payment_not_valid_goes_back_to_waiting():
     run(msg(sender="905000000611", kind="document", data=b"%PDF-1.4", mime="application/pdf", filename="dekont.pdf", text=""))
     assert core.orders()[1]["status"] == "payment_review" and any(e["kind"] == "document" and "Payment proof" in e["body"] for e in sent(ADMIN))
     agent.LLM = fake("We couldn't verify it yet, could you send a clear receipt? 🌸")
-    at()["reject_payment_proof"].invoke({"order_id": 2, "reason": "amount does not match"})
+    at()["reject_payment_proof"].invoke({"undo_confirmation": True, "order_id": 2, "reason": "amount does not match"})
     assert core.orders()[1]["status"] == "awaiting_payment" and "receipt" in sent("905000000611")[-1]["body"]
 
 
@@ -641,7 +716,7 @@ def test_selection_tool_adds_valid_indexes_and_flags_only_invalid_ones():
     result = tool.invoke({"positions": [1, 2, 3, 8]})
     row = core.open_order(CUST)
     assert {core._nm(n) for n, _, _ in core.row_lines(row)} == {core._nm(p["name"]) for p in products[:3]}
-    assert "INVALID OPTION INDEXES: [8]" in result
+    assert "INVALID POSITIONS: [8]" in result
     assert core._nm(products[3]["name"]) not in {core._nm(n) for n, _, _ in core.row_lines(row)}
 
 
@@ -858,7 +933,7 @@ def test_items_already_in_the_open_order_are_not_added_again_by_an_unrelated_mes
     agent.AFTER.pop(CUST, None); core.kset(f"formsent:1", 0)
     st["text"] = "oh so pretty, ok i want it"; st["placed"] = set()  # the model calls place_order again for the item already there: nothing changes, nothing is said about duplicates, and the FORM goes out
     r = t["place_order"].invoke({"items": [{"product_id": rose, "quantity": 1}]})
-    assert q() == "1" and "NOTHING CHANGED" in r and "NEVER tell the customer about duplicates" in r and "already sent" in r and not agent.AFTER.get(CUST), r
+    assert q() == "1" and "NOTHING CHANGED" in r and "never tell the customer about duplicates" in r and "never ask whether to add it" in r and "already sent" in r and not agent.AFTER.get(CUST), r
     st["text"] = "which form"; st["placed"] = set()  # the form is already sent: no second one
     r = t["place_order"].invoke({"items": [{"product_id": rose, "quantity": 1}]})
     assert q() == "1" and "already sent" in r.lower() and not agent.AFTER.get(CUST)
@@ -911,7 +986,7 @@ def test_the_simulation_viewer_can_open_files_through_the_dashboard_proxy():
     import re as re_
     src = (ROOT / "dashboard.py").read_text(encoding="utf-8")
     rx = re_.search(r're\.fullmatch\(r"(embed/\(sim\|chat\)[^"]*)", path\)', src).group(1)
-    for ok in ("download/quotation_1.pdf", "view/quotation_1.pdf", "view/17_photo.jpg", "embed/sim", "feed"):
+    for ok in ("download/invoice_1.pdf", "view/invoice_1.pdf", "view/17_photo.jpg", "embed/sim", "feed"):
         assert re_.fullmatch(rx, ok), ok  # the viewer opens /sandbox/view/<file> (the page turns /download/ into /view/): it was a 404 = an empty viewer
     for bad in ("view/../x", "view/a/b", "api/anything", "dashboard"):
         assert not re_.fullmatch(rx, bad), bad
@@ -1096,7 +1171,8 @@ def test_photo_decision_is_logged_with_the_chosen_model(monkeypatch):
 
 def test_update_order_records_form_then_notifies_owner_only_after_customer_confirms():
     t = tools()
-    assert "no open order" in t["update_order"].invoke({"delivery_date": "2026-11-04"})
+    assert "SAVED for the order" in t["update_order"].invoke({"delivery_date": "2026-11-04"})  # kept for the order that does not exist yet
+    core.kset("early:" + CUST, "")
     t["place_order"].invoke({"items": [{"product_id": pid("Teddy"), "quantity": 2}]})
     confirm_basket()
     n = len(core.FEED)
@@ -1114,7 +1190,7 @@ def test_update_order_records_form_then_notifies_owner_only_after_customer_confi
 
 def test_team_asks_for_one_detail_answer_is_saved_and_sent_back_for_confirmation():
     ready(delivery_date="")
-    agent.LLM = fake(AIMessage("", tool_calls=[{"name": "ask_customer", "args": {"order_id": 1, "field": "delivery date", "message": "Which day suits you? 🌸"}, "id": "1"}]), "Asked.")
+    agent.LLM = fake(AIMessage("", tool_calls=[{"name": "ask_customer", "args": {"order_id": 1, "field": "delivery date", "message": "Which day suits you? 🌸"}, "id": "1"}]), "Which day suits you? 🌸", "Asked.")
     agent.admin_entry(ADMIN, "ask them for the date only")
     assert any("Which day suits you" in e["body"] for e in sent(CUST)) and core.jget("askf:" + CUST)["field"] == "delivery date"
     r = tools()["update_order"].invoke({"delivery_date": "Wednesday"})
@@ -1595,7 +1671,12 @@ def test_payment_message_turkish_variant_and_form_text_are_exact():
     assert sent(CUST)[-1]["body"].startswith("Gönderen adı:") and "Eksik alanları doldurup kopyalayabilir" in sent(CUST)[-1]["body"]
     tl["update_order"].invoke({**FORM, "delivery_type": "normal"})
     agent.LLM = fake("ok")
-    at()["decide_order"].invoke({"order_id": 1, "confirm": True})
+    assert at("onayla")["decide_order"].invoke({"order_id": 1, "confirm": True}).startswith("REFUSED: order #1 was not submitted yet")  # recap shown, no yes yet
+    assert core.orders()[0]["status"] == "pending"
+    core.kset("formack:1", "1")
+    core.save(CUST, "assistant", agent.order_review_reply(core.open_order(CUST), 1))  # the recap she was shown
+    {t.name: t for t in agent.make_tools(CUST, "Ayse", {"text": "evet"})}["confirm_order_details"].invoke({})  # her yes submits it
+    at("onayla")["decide_order"].invoke({"order_id": 1, "confirm": True})
     pay = sent(CUST)[-1]["body"]
     assert pay.startswith("Siparişiniz #1") and "ÖDENECEK TOPLAM: 1,800 TL" in pay and "ücretsiz" in pay and "Dekontu da benimle paylaşırmısınız lütfen" in pay and "13:00'te çıkış" in pay
 
@@ -1693,15 +1774,15 @@ def test_delivery_yes_no_first_uses_the_city_in_the_question(monkeypatch):
 
 
 def test_the_form_arrives_prefilled_with_everything_already_known():
-    core.save(CUST, "user", "my girlfriend farida likes blue roses")
+    core.save(CUST, "user", "my girlfriend nour likes blue roses")
     tl = tools()
     tl["place_order"].invoke({"items": [{"product_id": pid("Teddy"), "quantity": 2}]})
     confirm_basket(CUST)
-    r = tl["send_order_form"].invoke({"recipient_name": "Farida", "address": "Girne", "note": "Happy birthday - Hasan"})
+    r = tl["send_order_form"].invoke({"recipient_name": "Nour", "address": "Girne", "note": "Happy birthday - Hasan"})
     agent.flush_after(CUST)
     body = sent(CUST)[-1]["body"]
-    assert "Recipient's name: Farida" in body and f"Your phone: +{CUST}" in body and "City / town: Girne" in body and "Delivery address:\n" in body and "Card message (optional): Happy birthday - Hasan" in body and "Your name:\n" in body
-    assert "Still missing from the form" in r and "recipient name" not in r.split("Still missing from the form")[1].split(".")[0] and "sender name" in r and core.orders()[0]["recipient_name"] == "Farida"
+    assert "Recipient's name: Nour" in body and f"Your phone: +{CUST}" in body and "City / town: Girne" in body and "Delivery address:\n" in body and "Card message (optional): Happy birthday - Hasan" in body and "Your name:\n" in body
+    assert "Still missing from the form" in r and "recipient name" not in r.split("Still missing from the form")[1].split(".")[0] and "sender name" in r and core.orders()[0]["recipient_name"] == "Nour"
     # later details are saved even though the form is not sent twice; the labels and wording stay exactly the hard-coded ones
     assert "already sent" in tl["send_order_form"].invoke({"recipient_phone": "05331111111"}) and core.orders()[0]["recipient_phone"] == "+905331111111"
     template = json.loads((ROOT / "data/order_form.json").read_text(encoding="utf-8"))["en"]
@@ -1711,9 +1792,9 @@ def test_the_form_arrives_prefilled_with_everything_already_known():
     t2 = tools("905000000606")
     t2["place_order"].invoke({"items": [{"product_id": pid("Teddy"), "quantity": 2}]})
     confirm_basket("905000000606")
-    t2["send_order_form"].invoke({"recipient_name": "Farida"})
+    t2["send_order_form"].invoke({"recipient_name": "Nour"})
     agent.flush_after("905000000606")
-    assert "Alıcı adı: Farida" in sent("905000000606")[-1]["body"] and "Kart notu" in sent("905000000606")[-1]["body"]
+    assert "Alıcı adı: Nour" in sent("905000000606")[-1]["body"] and "Kart notu" in sent("905000000606")[-1]["body"]
 
 
 def _confirmed(phone=CUST, qty=2, **form):
@@ -1727,7 +1808,12 @@ def _confirmed(phone=CUST, qty=2, **form):
 def test_change_requests_only_for_locked_orders_of_the_same_customer():
     tl = tools()
     tl["place_order"].invoke({"items": [{"product_id": pid("Teddy"), "quantity": 2}]})
-    assert "PASSED TO THE TEAM" in tl["request_change"].invoke({"cancel": True}) and core.orders()[0]["status"] != "rejected"  # not paid yet: still waits for the owner's approval
+    assert "CANCELLED" in tl["request_change"].invoke({"cancel": True, "reason": "changed my mind"}) and core.orders()[0]["status"] == "cancelled"  # a draft the owner never saw: cancelled at once
+    assert any("Lost potential lead" in e["body"] for e in core.FEED if e.get("to") == ADMIN)  # and the owner hears it as a lost lead
+    t2 = tools("905000000716")
+    t2["place_order"].invoke({"items": [{"product_id": pid("Teddy"), "quantity": 2}]})
+    core.kset("announced:2", 1)  # the owner has been told about this one
+    assert "PASSED TO THE TEAM" in t2["request_change"].invoke({"cancel": True}) and core.orders()[1]["status"] != "rejected"  # not paid yet: still waits for the owner's approval
     oid = _confirmed("905000000717")
     assert "no confirmed order" in tools("905000000718")["request_change"].invoke({"cancel": True, "order_id": oid})  # someone else's order
     assert "nothing to change" in tools("905000000717")["request_change"].invoke({})
@@ -2096,7 +2182,7 @@ def test_prices_before_after_same_day_badges_policies_quality_and_the_shops_page
     core._load.cache_clear()
     n = core.product(teddy)
     b = core.brief(core.priced(n, core.live_prices([n], show=True)[teddy]), "both")
-    assert (b["price"], b["old_price"], b["same_day"], b["badges"]) == (900.0, 1500.0, False, ["promotional", "new"])  # price = AFTER (what is paid), old_price = BEFORE
+    assert (b["price"], b["same_day"], b["badges"]) == (900.0, False, ["promotional", "new"]) and "old_price" not in b  # customers never see the BEFORE price
     core.save_prices({teddy: {"price": 900, "in_stock": True, "ts": time.time()}})  # the promotion ended, the page said nothing about same-day this time
     core._load.cache_clear()
     assert core.product(teddy)["old_price"] is None and core.product(teddy)["same_day"] is False
@@ -2174,12 +2260,12 @@ def test_the_owner_can_change_the_phone_of_a_person_in_the_admin_chat_and_the_ne
 def test_pdfs_open_in_a_viewer_and_stay_downloadable_and_the_simulation_page_is_black_with_attachments_and_voice():
     c = dash_client(); dash_login(c)
     ready()
-    for url in ("/api/dash/orders/1/pdf?kind=quotation", "/api/dash/orders/1/pdf?kind=invoice", "/api/dash/reports/week"):
+    for url in ("/api/dash/orders/1/pdf?kind=invoice", "/api/dash/orders/1/pdf?kind=receipt", "/api/dash/reports/week"):
         d = c.get(url).headers["content-disposition"]
         i = c.get(url + ("&" if "?" in url else "?") + "inline=1").headers["content-disposition"]
         assert d.startswith("attachment") and i.startswith("inline"), url  # the viewer shows it, the download button saves it
     html = (ROOT / "static/dashboard.html").read_text(encoding="utf-8")
-    assert "viewFile('/api/dash/orders/${i}/pdf?kind=quotation'" in html and 'href="/api/dash/orders/${i}/pdf?kind=quotation" target="_blank"' not in html
+    assert "viewFile('/api/dash/orders/${i}/pdf?kind=invoice'" in html and 'href="/api/dash/orders/${i}/pdf?kind=invoice" target="_blank"' not in html
     sim = (ROOT / "static/simulate.html").read_text(encoding="utf-8")
     assert "--bg:#000" in sim and "--panel:#000" in sim and "getUserMedia" in sim and 'type="file"' in sim and "openV(" in sim and "/view/" in sim
     out = core.P("outbox"); out.mkdir(exist_ok=True); (out / "1_quote.pdf").write_bytes(b"%PDF-1.4 test")
@@ -2689,13 +2775,13 @@ def test_dashboard_edits_the_items_of_an_order_at_every_stage():
     assert c.post("/api/dash/orders/1/items", json={"items": [{"name": name, "quantity": 3}]}, headers=H).status_code == 200
     r = core.orders()[0]
     assert r["status"] == "pending" and core.row_lines(r)[0][1] == 3 and core.row_lines(r)[0][2] == unit and sent(CUST)
-    # after the quotation (payment not confirmed): back to the confirmation step, the quotation no longer counts
+    # after the invoice (payment not confirmed): back to the confirmation step, the invoice no longer counts
     assert c.post("/api/dash/orders/1/confirm", json={}, headers=H).status_code == 200
     assert core.orders()[0]["status"] == "awaiting_payment"
     core.FEED.clear()
     assert c.post("/api/dash/orders/1/items", json={"items": [{"name": name, "quantity": 2}, {"product_id": other, "quantity": 1}]}, headers=H).status_code == 200
     r = core.orders()[0]
-    assert r["status"] == "pending" and len(core.row_lines(r)) == 2 and any("quotation" in e["body"] for e in sent(CUST))
+    assert r["status"] == "pending" and len(core.row_lines(r)) == 2 and any("invoice" in e["body"] for e in sent(CUST))
     # an order needs an item; a shipped or cancelled one cannot be changed
     assert c.post("/api/dash/orders/1/items", json={"items": []}, headers=H).status_code == 400
     # after the payment was confirmed: the owner's edit is the approval, a higher total asks only for the difference
@@ -2789,7 +2875,8 @@ def test_a_whatsapp_reply_is_understood_as_about_the_message_it_quotes():
 
 def test_no_open_order_is_never_reported_as_saved():
     out = tools()["update_order"].invoke({"recipient_name": "Hasan"})
-    assert "NOTHING WAS SAVED" in out and "place_order" in tools()["send_order_form"].invoke({})
+    assert "SAVED for the order" in out and "place_order" in out  # kept for the order, never reported as already in an order
+    assert "place_order" in tools()["send_order_form"].invoke({})
 
 
 def test_every_price_is_read_with_the_catalog_one_product_alone_on_request_and_the_job_runs_nightly():
@@ -2871,11 +2958,15 @@ def test_a_kind_of_item_is_not_answered_as_if_it_were_one_product():
     assert fast.answer(CUST, "papatya buketi var mı?") is None and fast.answer(CUST, "do you have a daisy bouquet?") is None
 
 
-def test_card_links_are_not_sent_when_the_customer_did_not_ask_about_card_payment_now():
-    tl = {t.name: t for t in agent.make_tools(CUST, "Ayse", {"text": "the 12 red roses bouquet please", "photos": {}})}
-    assert "NOT NEEDED" in tl["card_payment_links"].invoke({"product_ids": []}) and not agent.card_on(CUST)
-    tl = {t.name: t for t in agent.make_tools(CUST, "Ayse", {"text": "can I pay by card?", "photos": {}})}
-    assert "https://" in tl["card_payment_links"].invoke({}) and agent.card_on(CUST)
+def test_card_mode_is_set_by_the_model_and_left_only_through_accept_bank_transfer():
+    tl = {t.name: t for t in agent.make_tools(CUST, "Ayse", {"text": "kartla ödemek istiyorum", "photos": {}})}
+    tl["card_payment_links"].invoke({"product_ids": []})
+    assert agent.card_on(CUST)
+    assert "NOT DONE" in tl["place_order"].invoke({"items": [{"product_id": pid("Teddy"), "quantity": 1}]})  # no order while they pay by card
+    agent.card_choice(CUST, "what is your iban?")  # a word is never enough to leave card mode
+    assert agent.card_on(CUST)
+    tl["accept_bank_transfer"].invoke({})
+    assert not agent.card_on(CUST)
 
 
 def test_dashboard_lists_every_catalog_item_with_search_category_filter_and_one_item_actions(monkeypatch):
@@ -2938,29 +3029,29 @@ def test_the_picker_and_the_catalog_list_every_item_in_the_dashboard_language_wi
     assert c.get("/api/dash/catalog?lang=ru&q=" + "Русское").json()["items"]  # and the Russian name is searchable
 
 
-def test_quotation_with_bank_details_at_the_first_confirmation_and_invoice_after_the_payment_are_sent_as_pdfs():
+def test_invoice_with_bank_details_at_the_first_confirmation_and_receipt_after_the_payment_are_sent_as_pdfs():
     import docs_pdf
     ready()
     agent.LLM = fake("ok")
     at()["decide_order"].invoke({"order_id": 1, "confirm": True})
     docs = [e for e in sent(CUST) if e["kind"] == "document"]
-    assert len(docs) == 1 and docs[0]["file"].endswith("quotation_1.pdf") and "uotation" in docs[0]["body"]
+    assert len(docs) == 1 and docs[0]["file"].endswith("invoice_1.pdf") and "Invoice" in docs[0]["body"]
     assert (core.P("outbox") / docs[0]["file"]).read_bytes().startswith(b"%PDF")
     row = core.orders()[0]
-    q = docs_pdf.doc_data(row, "quotation", "en")
-    assert q["bank"]["iban"] == core._json("payment.json")["iban"] and q["number"] == "Q-00001" and q["payable"] == row["payable"] and q["items"]
-    assert docs_pdf.doc_data(row, "quotation", "tr")["title"] == "TEKLİF"
+    q = docs_pdf.doc_data(row, "invoice", "en")
+    assert q["bank"]["iban"] == core._json("payment.json")["iban"] and q["number"] == "INV-00001" and q["payable"] == row["payable"] and q["items"]
+    assert docs_pdf.doc_data(row, "invoice", "tr")["title"] == "FATURA"
     at()["confirm_payment_received"].invoke({"order_id": 1})
     docs = [e for e in sent(CUST) if e["kind"] == "document"]
-    assert len(docs) == 2 and docs[1]["file"].endswith("invoice_1.pdf") and (core.P("outbox") / docs[1]["file"]).read_bytes().startswith(b"%PDF")
-    inv = docs_pdf.doc_data(core.orders()[0], "invoice", "en")
-    assert inv["bank"] is None and inv["number"] == "INV-00001" and inv["paid"] == core.orders()[0]["payable"] and core.orders()[0]["status"] == "confirmed"
+    assert len(docs) == 2 and docs[1]["file"].endswith("receipt_1.pdf") and (core.P("outbox") / docs[1]["file"]).read_bytes().startswith(b"%PDF")
+    inv = docs_pdf.doc_data(core.orders()[0], "receipt", "en")
+    assert inv["bank"] is None and inv["number"] == "RCT-00001" and inv["paid"] == core.orders()[0]["payable"] and core.orders()[0]["status"] == "confirmed"
 
 
-def test_the_dashboard_can_open_the_quotation_and_invoice_of_an_order():
+def test_the_dashboard_can_open_the_invoice_and_receipt_of_an_order():
     c = dash_client(); dash_login(c)
     ready()
-    for kind in ("quotation", "invoice"):
+    for kind in ("invoice", "receipt"):
         r = c.get(f"/api/dash/orders/1/pdf?kind={kind}")
         assert r.status_code == 200 and r.content.startswith(b"%PDF") and r.headers["content-type"] == "application/pdf"
     assert c.get("/api/dash/orders/1/pdf?kind=other").status_code == 400
@@ -3035,10 +3126,10 @@ def test_a_telegram_customer_has_no_phone_number_so_the_agent_asks_for_it_and_th
     assert any(m[1] == "tg:42" and "READY for your first confirmation" in m[2] for m in core.TG.sent)
     run(msg(sender="tg:42", text="list orders"))  # the owner writes from Telegram: the admin assistant answers, not the customer agent
     assert any(m[1] == "tg:42" for m in core.TG.sent[1:])
-    # approving sends the quotation PDF through Telegram too
+    # approving sends the invoice PDF through Telegram too
     agent.LLM = fake("ok")
     at()["decide_order"].invoke({"order_id": 1, "confirm": True})
-    assert any(m[0] == "doc" and m[1] == tid and m[3].endswith("quotation_1.pdf") for m in core.TG.sent)
+    assert any(m[0] == "doc" and m[1] == tid and m[3].endswith("invoice_1.pdf") for m in core.TG.sent)
 
 
 def test_an_owner_with_one_account_can_switch_to_customer_mode_and_back():
@@ -3249,15 +3340,15 @@ def test_confirm_it_on_a_receipt_confirms_the_payment():
     assert core.orders()[0]["status"] == "confirmed" and core.orders()[0]["paid"] == row["payable"]
 
 
-def test_quotation_and_invoice_documents_are_always_in_english_and_turkish():
+def test_invoice_and_receipt_documents_are_always_in_english_and_turkish():
     import docs_pdf
     ready()
     row = core.orders()[0]
-    assert docs_pdf.doc_data(row, "quotation", "bi")["title"] == "QUOTATION / TEKLİF" and docs_pdf.doc_data(row, "invoice", "bi")["title"] == "INVOICE / FATURA"
-    q = docs_pdf.doc_data(row, "quotation", "bi")
+    assert docs_pdf.doc_data(row, "invoice", "bi")["title"] == "INVOICE / FATURA" and docs_pdf.doc_data(row, "receipt", "bi")["title"] == "RECEIPT / TAHSİLAT MAKBUZU"
+    q = docs_pdf.doc_data(row, "invoice", "bi")
     assert "Teddy" in q["items"][0][0] and " / " in q["bank"]["receipt"]
     at()["decide_order"].invoke({"order_id": 1, "confirm": True})
-    assert (core.P("documents") / "quotation_1.pdf").read_bytes().startswith(b"%PDF")
+    assert (core.P("documents") / "invoice_1.pdf").read_bytes().startswith(b"%PDF")
 
 
 def test_a_telegram_photo_reaches_the_agent(monkeypatch):
@@ -3359,7 +3450,7 @@ def test_an_edit_after_first_confirmation_waits_for_admin_approval_even_when_unp
     agent.approve_change(ADMIN, 1)
     row = core.orders()[0]
     assert row["status"] == "awaiting_payment" and row["quantities"] == "2; 1" and not row["change_request"]
-    assert any(e["kind"] == "document" and "Quotation" in e["body"] for e in sent(CUST))
+    assert any(e["kind"] == "document" and "Invoice" in e["body"] for e in sent(CUST))
 
 
 def test_the_crm_fills_phone_recipients_and_location_from_the_order_forms_and_company_is_optional():
@@ -3433,10 +3524,10 @@ def test_the_owner_gets_a_sales_order_pdf_with_every_detail_when_an_order_is_rea
     core.kset("seen:" + ADMIN, time.time())
     ready()
     docs = [e for e in sent(ADMIN) if e["kind"] == "document"]
-    assert len(docs) == 1 and docs[0]["file"].endswith("salesorder_1.pdf") and "Sales order #1" in docs[0]["body"]
+    assert len(docs) == 1 and docs[0]["file"].endswith("orderrequest_1.pdf") and "Order request #1" in docs[0]["body"]
     assert (core.P("outbox") / docs[0]["file"]).read_bytes().startswith(b"%PDF")
-    d = docs_pdf.doc_data(core.orders()[0], "salesorder", "bi")
-    assert d["title"] == "SALES ORDER / SATIŞ SİPARİŞİ" and d["number"] == "SO-00001" and d["bank"] is None
+    d = docs_pdf.doc_data(core.orders()[0], "orderrequest", "bi")
+    assert d["title"] == "ORDER REQUEST / SİPARİŞ TALEBİ" and d["number"] == "OR-00001" and d["bank"] is None
     keys = [k for k, v in d["info"] if v]
     assert {"customer", "sender", "recipient", "address", "when", "dtype", "status"} <= set(keys)
     card = [e["body"] for e in sent(ADMIN) if "READY for your first confirmation" in e["body"]][-1]
@@ -3589,7 +3680,7 @@ def test_weekly_and_monthly_reports_count_completed_ongoing_and_cancelled_in_the
     assert core.report("week").startswith("📊") and core.report("week").rstrip().endswith(tuple(core.CHEERS_TR))
 
 
-def test_reports_are_pdfs_in_the_invoice_style_with_a_turkish_encouraging_line():
+def test_reports_are_pdfs_in_the_receipt_style_with_a_turkish_encouraging_line():
     import docs_pdf
     core.kset("seen:" + ADMIN, time.time())
     assert len(core.CHEERS_TR) >= 30 and len(set(core.CHEERS_TR)) == len(core.CHEERS_TR)
@@ -3626,13 +3717,13 @@ def test_reject_always_works_without_a_reason_and_the_customer_gets_an_excuse(mo
     agent.LLM = fake("We are so sorry, we cannot serve customers at the moment, please forgive us 🌸")
     r = c.post("/api/dash/orders/1/reject", json={}, headers=H)  # no reason
     assert r.status_code == 200 and core.orders()[0]["status"] == "rejected"
-    assert "cannot serve customers at the moment" in sent(CUST)[-1]["body"]
+    assert "has been cancelled" in sent(CUST)[-1]["body"]
     # a paid order can be rejected too: the owner is reminded of the refund
     core.apply_orders_edit([{**core.orders()[0], "status": "confirmed", "paid": core.orders()[0]["payable"] or "100"}])
     agent.LLM = fake("down")  # the model fails -> the fixed excuse is used
     monkeypatch.setattr(agent, "get_llm", lambda: (_ for _ in ()).throw(RuntimeError("model down")))
     r = c.post("/api/dash/orders/1/reject", json={"reason": ""}, headers=H)
-    assert r.status_code == 200 and core.orders()[0]["status"] == "rejected" and "can't serve customers at the moment" in sent(CUST)[-1]["body"]
+    assert r.status_code == 200 and core.orders()[0]["status"] == "rejected" and "has been cancelled" in sent(CUST)[-1]["body"]
     assert any("PAID" in m for m in r.json()["messages"])
     html = c.get("/dashboard").text
     assert html.count('b("bad","btn_reject",`rj(${i})`)') >= 3
@@ -3805,7 +3896,7 @@ def test_an_order_entered_for_somebody_who_ordered_in_person_is_created_with_the
                                                   "address": "Girne, Lemon street 504", "delivery_date": "2026-11-20", "delivery_type": "normal"})
     new = core.orders()[-1]
     assert new["order_id"] == "2" and new["customer_number"] == "905488458196" and core.is_external(new) and new["items"] == core.orders()[0]["items"] and new["recipient_name"] == "Samera"
-    assert "did he already PAY" in out and "EXPECT a message" in out and "sales order was sent" in out
+    assert "did he already PAY" in out and "EXPECT a message" in out and "order request was sent" in out
     api = {o["order_id"]: o for o in c.get("/api/dash/orders", headers=H).json()}
     assert api["2"]["external"] is True
     # no number: kept as an in-person customer nobody can message, then linked to a number
@@ -4055,15 +4146,15 @@ def test_the_search_plan_reads_budget_sorting_and_product_words_from_the_message
 def test_the_form_follows_basket_confirmation_once_even_after_a_basket_change(monkeypatch):
     monkeypatch.setenv("LIST_CONFIRM", "1")
     p = pid("Teddy")
-    r = tools()["place_order"].invoke({"items": [{"product_id": p, "quantity": 1}], "recipient_name": "Farida", "address": "Girne, Lemon street 5"})
+    r = tools()["place_order"].invoke({"items": [{"product_id": p, "quantity": 1}], "recipient_name": "Nour", "address": "Girne, Lemon street 5"})
     assert "anything else" in r and not agent.AFTER.get(CUST)
-    assert core.orders()[0]["recipient_name"] == "Farida"
+    assert core.orders()[0]["recipient_name"] == "Nour"
     row = core.open_order(CUST)
     core.save(CUST, "assistant", f"Your basket: {core._items_text(row)}. Goods total {core.fmt_tl(row['subtotal'])}. Is this everything?")
     row = core.open_order(CUST)
     core.save(CUST, "assistant", f"Your basket: {core._items_text(row)}. Goods total {core.fmt_tl(row['subtotal'])}. Is this everything?")
     out = tools()["confirm_item_list"].invoke({})
-    assert "ITEMS CONFIRMED" in out and len(agent.AFTER[CUST]) == 1 and "Recipient's name: Farida" in agent.AFTER[CUST][0]
+    assert "ITEMS CONFIRMED" in out and len(agent.AFTER[CUST]) == 1 and "Recipient's name: Nour" in agent.AFTER[CUST][0]
     tools()["send_order_form"].invoke({"sender_name": "Ali"})
     assert len(agent.AFTER[CUST]) == 1 and core.orders()[0]["sender_name"] == "Ali"  # the sent form is not duplicated or rewritten
     agent.flush_after(CUST)
@@ -4579,7 +4670,7 @@ def test_a_plain_confirm_gives_the_next_confirmation_whichever_tool_the_assistan
     run(msg(kind="image", data=JPG, mime="image/jpeg", text=""))  # the receipt arrives
     assert core.orders()[0]["status"] == "payment_review"
     at()["decide_order"].invoke({"order_id": 1, "confirm": True})  # "confirm" with a receipt waiting = the payment confirmation
-    assert core.orders()[0]["status"] == "confirmed" and any(e["kind"] == "document" and "invoice" in e["file"] for e in sent(CUST))
+    assert core.orders()[0]["status"] == "confirmed" and any(e["kind"] == "document" and "receipt" in e["file"] for e in sent(CUST))
     ready("905000000888")  # order 2 through the decide tool as before: unchanged
     at()["decide_order"].invoke({"order_id": 2, "confirm": True})
     assert core.order_row(2)["status"] == "awaiting_payment"
@@ -5099,7 +5190,7 @@ def test_a_photo_of_an_item_in_an_unpaid_order_is_the_catalog_photo_and_the_aler
     assert alert and p["name"] in alert[-1]  # names the one product, not the whole order
 
 
-def test_after_the_final_confirmation_the_owner_decides_and_an_approved_change_sends_a_new_quotation():
+def test_after_the_final_confirmation_the_owner_decides_and_an_approved_change_sends_a_new_invoice():
     ready()
     at()["decide_order"].invoke({"order_id": 1, "confirm": True})
     at("confirm it")["confirm_payment_received"].invoke({"order_id": 1})
@@ -5130,7 +5221,7 @@ def test_after_the_final_confirmation_the_owner_decides_and_an_approved_change_s
     assert row["delivery_type"] == "jet" and not row["change_request"] and row["status"] == "confirmed" and row["order_id"] == "1"
     assert core.D(row["paid"]) == core.D(paid0) + diff == core.D(row["payable"])
     assert [(e["kind"], e["amount"]) for e in core.ledger(1)] == [("payment", core.mstr(core.D(paid0))), ("extra_payment", core.mstr(diff))]
-    assert any(e["kind"] == "document" and e["to"] == CUST for e in core.FEED)  # the new invoice
+    assert any(e["kind"] == "document" and e["to"] == CUST for e in core.FEED)  # the new receipt
 
 
 def test_cancelling_a_paid_order_after_the_owner_agrees_books_the_sale_as_a_loss():
@@ -5143,6 +5234,8 @@ def test_cancelling_a_paid_order_after_the_owner_agrees_books_the_sale_as_a_loss
     at("approve it")["decide_order"].invoke({"order_id": 1, "confirm": True})
     row = core.orders()[0]
     assert row["status"] == "rejected" and row["paid"] == "" and "refunded outside the system" in row["notes"]  # deducted: a loss, not a sale
+    assert "arrange the refund" in sent(ADMIN)[-1]["body"] and "payment you made" in sent(CUST)[-1]["body"]  # the owner is reminded of the refund, the customer hears the team will contact them
+    assert "refund_due" in core.P("payments.jsonl").read_text(encoding="utf-8")
 
 
 def test_the_saved_contacts_remember_every_person_the_customer_sent_to():
@@ -5174,29 +5267,29 @@ def test_change_explain_names_every_reason_the_total_moved():
 
 def test_a_payment_is_confirmed_only_on_a_clear_yes_and_a_complaint_is_never_a_confirmation():
     assert agent.owner_says_ok("confirm it") and agent.owner_says_ok("ok, paid") and agent.owner_says_ok("(replying to this earlier message: «or tell me it is not valid») approve")
-    for bad in ("he sent the quotation", "the amount is wrong", "not valid", "no", "that is not a receipt, confirm nothing", "unclear photo"):
+    for bad in ("he sent the invoice", "the amount is wrong", "not valid", "no", "that is not a receipt, confirm nothing", "unclear photo"):
         assert not agent.owner_says_ok(bad), bad
     ready()
     at()["decide_order"].invoke({"order_id": 1, "confirm": True})
     core.order_update(1, ("awaiting_payment",), status="payment_review")
-    out = at("he sent the quotation")["confirm_payment_received"].invoke({"order_id": 1})
+    out = at("he sent the invoice")["confirm_payment_received"].invoke({"order_id": 1})
     assert "REFUSED" in out and "reject_payment_proof" in out and core.orders()[0]["status"] == "payment_review"  # nothing confirmed
-    out = at("he sent the quotation")["decide_order"].invoke({"order_id": 1, "confirm": True})
+    out = at("he sent the invoice")["decide_order"].invoke({"order_id": 1, "confirm": True})
     assert "REFUSED" in out and core.orders()[0]["status"] == "payment_review"
     out = at("confirm it")["confirm_payment_received"].invoke({"order_id": 1})
     assert core.orders()[0]["status"] == "confirmed"  # a clear yes still works
 
 
-def test_our_own_quotation_sent_back_is_not_a_receipt():
+def test_our_own_invoice_sent_back_is_not_a_receipt():
     row = _ready_unpaid()
     pay = core._json("payment.json")
-    txt = f"QUOTATION / TEKLİF\\nNo. / No Q-00001\\nTotal {core.fmt_tl(row['payable'])}\\nIBAN {pay['iban']}\\nAccount holder {pay['holder']}"
+    txt = f"INVOICE / FATURA\\nNo. / No INV-00001\\nTotal {core.fmt_tl(row['payable'])}\\nIBAN {pay['iban']}\\nAccount holder {pay['holder']}"
     res = receipt.check(txt, row)
     assert res["own"] and res["verdict"] == "irrelevant"
     agent.HOOKS.ocr = lambda b: txt
     run(msg(kind="image", data=JPG, mime="image/jpeg", text=""))
     assert core.orders()[0]["status"] == "awaiting_payment" and not any("Payment proof" in e["body"] for e in sent(ADMIN))
-    assert any("our quotation" in e["body"].lower() for e in sent(CUST))
+    assert any("our invoice" in e["body"].lower() for e in sent(CUST))
 
 
 def test_a_payment_confirmed_by_mistake_is_undone_and_the_order_goes_back_to_waiting_for_payment():
@@ -5206,7 +5299,7 @@ def test_a_payment_confirmed_by_mistake_is_undone_and_the_order_goes_back_to_wai
     assert core.orders()[0]["status"] == "confirmed" and core.orders()[0]["paid"]
     before = core.q("SELECT n FROM stat WHERE key='orders_confirmed' AND kind='day'")[0][0]
     agent.LLM = fake("We could not verify your payment yet, please send a valid receipt.")
-    out = at("it was not paid, tell him")["reject_payment_proof"].invoke({"order_id": 1, "reason": "he sent the quotation, not a receipt"})
+    out = at("it was not paid, tell him")["reject_payment_proof"].invoke({"undo_confirmation": True, "order_id": 1, "reason": "he sent the invoice, not a receipt"})
     row = core.orders()[0]
     assert row["status"] == "awaiting_payment" and row["paid"] == "" and core.pay_state(row) == "unpaid"
     assert "UNDONE" in out and core.q("SELECT n FROM stat WHERE key='orders_confirmed' AND kind='day'")[0][0] == before - 1
@@ -5290,6 +5383,7 @@ def test_every_member_downloads_the_running_week_and_month_report_and_only_the_c
 
 
 def test_the_owners_plain_answer_to_an_alert_goes_to_the_latest_alerts_customer():
+    agent.LLM = fake("We will send you the photo soon 🌸")
     ready()
     core.kset("seen:" + ADMIN, time.time())
     tools(CUST)["flag_admin"].invoke({"kind": "unknown", "summary": "wants a real photo of the bear"})
@@ -5799,7 +5893,7 @@ def test_submitted_order_is_idempotent_and_changes_need_owner_approval(monkeypat
     before = core.order_row(1)
     result = t["change_my_order"].invoke({"items": [{"product_id": pid("Purple Orchid"), "quantity": 3}]})
     assert "CHANGED" in result and core.order_row(1)["items"] != before["items"]
-    assert not ready_rows()  # the changed recap must be confirmed before the replacement sales order is sent
+    assert not ready_rows()  # the changed recap must be confirmed before the replacement order request is sent
 
 
 def test_new_products_after_a_submitted_order_make_a_new_order_and_leave_the_first_alone(monkeypatch):
@@ -5995,7 +6089,7 @@ def test_an_order_whose_sales_order_never_arrived_is_resent_when_the_customer_as
 def test_adding_and_removing_in_one_request_changes_the_paid_order_and_drops_the_add_on_draft():
     teddy, orchid = pid("Teddy"), pid("Purple Orchid")
     core.order_create(CUST, "A", core.priced_lines([(core.product(orchid), 1), (core.product(teddy), 1)], CUST), "Girne, Lemon street 5", "2026-12-01", "")
-    core.order_form_update(1, sender_name="Ali", recipient_name="Selin", recipient_phone="05331112233", address="Girne, Lemon street 5", delivery_date="2026-12-01")
+    core.order_form_update(1, sender_name="Ali", recipient_name="Selin", recipient_phone="05332223344", address="Girne, Lemon street 5", delivery_date="2026-12-01")
     at()["decide_order"].invoke({"order_id": 1, "confirm": True})
     at("confirm it")["confirm_payment_received"].invoke({"order_id": 1})
     paid = core.orders()[0]["paid"]
@@ -6153,7 +6247,7 @@ def test_declining_alternative_removes_only_unavailable_line_and_requires_a_new_
     row = core.order_row(1)
     assert row["status"] == "pending" and row["items"] == core._nm(core.product(rose)["name"])
     assert row["total"] == core.mstr(live(rose)) and "removed" in answer and "Is everything correct" in answer
-    assert core.kget("subm:1") != agent.submitted_signature(row)  # old quotation no longer matches the stored order
+    assert core.kget("subm:1") != agent.submitted_signature(row)  # old invoice no longer matches the stored order
     assert len([e for e in sent(ADMIN) if "READY for your first confirmation" in e["body"]]) == before_alerts
     agent.approve_order(ADMIN, row)
     assert "not confirmed and resubmitted" in sent(ADMIN)[-1]["body"]
@@ -6242,7 +6336,7 @@ def test_returning_customer_form_leaves_unknown_recipient_details_blank(monkeypa
 def test_a_change_request_on_the_paid_order_drops_the_add_on_draft_and_the_message_names_the_real_payment():
     teddy, orchid = pid("Teddy"), pid("Purple Orchid")
     core.order_create(CUST, "A", core.priced_lines([(core.product(orchid), 1), (core.product(teddy), 1)], CUST), "Girne, Lemon street 5", "2026-12-01", "")
-    core.order_form_update(1, sender_name="Ali", recipient_name="Selin", recipient_phone="05331112233", address="Girne, Lemon street 5", delivery_date="2026-12-01")
+    core.order_form_update(1, sender_name="Ali", recipient_name="Selin", recipient_phone="05332223344", address="Girne, Lemon street 5", delivery_date="2026-12-01")
     at()["decide_order"].invoke({"order_id": 1, "confirm": True})
     at("confirm it")["confirm_payment_received"].invoke({"order_id": 1})
     cake = next(n["id"] for n in core.graph()[0].values() if n["type"] == "product" and n["id"] not in (teddy, orchid) and PRICES.get(n["url"]) and PRICES.get(n["url"]) < 900)
@@ -6420,7 +6514,7 @@ def test_a_preapproval_edit_sends_only_one_replacement_after_the_new_recap_is_ap
     result = {x.name: x for x in agent.make_tools(CUST, "Ayse", {"text": "yes"})}["confirm_order_details"].invoke({})
     cards = [e for e in sent(ADMIN) if "READY for your first confirmation" in e["body"]]
     assert "SUBMITTED" in result and len(cards) == 1 and "EDITED" in cards[0]["body"]
-    assert not any("Quotation" in e["body"] for e in sent(CUST))
+    assert not any("Invoice" in e["body"] for e in sent(CUST))
 
 
 def test_delivery_question_and_final_recap_have_static_en_tr_ru_text():
@@ -6640,9 +6734,9 @@ def test_jet_is_only_a_request_for_the_owner_and_not_same_day_items_need_tomorro
     row, calc = core.order_form_update(1, address="Lefkosa, Lemon street 5", delivery_date="2026-11-16", delivery_type="jet", delivery_time="11:20")
     assert [p for p in calc["problems"] if "minimum order" not in p] == []  # a jet time soon after "now" is NOT refused or questioned: it is a request
     assert any("JET delivery requested for 2026-11-16 11:20" in n for n in core.approval_notes(row)) and "JET delivery requested" in core.order_block(row)
-    info = dict(docs_pdf.info(row, "salesorder", "en"))  # the sales order carries it for the owner (and in Turkish)
-    assert "JET REQUEST: APPROVE ONLY IF POSSIBLE" in info["dtype"] and "JET TALEBİ" in dict(docs_pdf.info(row, "salesorder", "tr"))["dtype"]
-    assert "JET" not in dict(docs_pdf.info(dict(row, delivery_type="normal"), "salesorder", "en"))["dtype"] and core.approval_notes(dict(row, delivery_type="normal")) == []
+    info = dict(docs_pdf.info(row, "orderrequest", "en"))  # the order request carries it for the owner (and in Turkish)
+    assert "JET REQUEST: APPROVE ONLY IF POSSIBLE" in info["dtype"] and "JET TALEBİ" in dict(docs_pdf.info(row, "orderrequest", "tr"))["dtype"]
+    assert "JET" not in dict(docs_pdf.info(dict(row, delivery_type="normal"), "orderrequest", "en"))["dtype"] and core.approval_notes(dict(row, delivery_type="normal")) == []
     # a not-same-day item cannot be ordered for today: the order must be for tomorrow, said by code
     core.set_override(teddy, "same_day", "no")
     row, calc = core.order_form_update(1, delivery_date="2026-11-16", delivery_type="normal")
@@ -6751,6 +6845,254 @@ def test_the_owners_plain_answer_about_a_receipt_is_handled_by_code_ok_confirms_
     assert not agent.receipt_decision(ADMIN, "ok", {"oid": 1}, None)  # already confirmed: a later "ok" does nothing
 
 
+def test_a_correction_with_a_not_is_never_a_receipt_rejection_and_reject_it_on_a_paid_order_rejects_the_order():
+    _ready_unpaid()
+    agent.LLM = fake("ok")
+    core.FEED.clear()
+    assert not agent.receipt_decision(ADMIN, "i did not mean you were correct, i meant the payment is correct", {"oid": 1}, None)
+    assert core.orders()[0]["status"] == "awaiting_payment" and not core.FEED
+    agent.confirm_payment(ADMIN, 1)
+    t = agent.admin_tools(ADMIN, "actually reject it, we are closed tomorrow", {"oid": 1}, None)["reject_payment_proof"]
+    assert "REFUSED" in t.invoke({"order_id": 1, "reason": "closed"}) and core.orders()[0]["status"] == "confirmed"
+
+
+def test_admin_language_mode_maps_product_names_and_kill_resume_work(monkeypatch):
+    monkeypatch.setenv("GRAPH_PATH", str(ROOT / "data/graph.json"))
+    p = next(x for x in core.graph()[0].values() if x.get("type") == "product" and x.get("name_en") and x.get("name_tr") and x["name_en"] != x["name_tr"] and len(x["name_en"]) > 5)
+    core.FEED.clear()
+    agent.admin_entry(ADMIN, "/turkish")
+    assert core.kget("adminlang:" + ADMIN) == "tr" and agent.reply_lang(ADMIN, "hello") == "Turkish"
+    assert core.admin_names(ADMIN, f"5 × {p['name_en']}") == f"5 × {p['name_tr']}"
+    assert core.admin_names(CUST, f"5 × {p['name_en']}") == f"5 × {p['name_en']}"  # customers are never touched
+    agent.admin_entry(ADMIN, "/english")
+    assert core.admin_names(ADMIN, f"5 × {p['name_tr']}") == f"5 × {p['name_en']}"
+
+
+def test_custom_item_gets_official_names_and_admin_messages_follow_the_mode():
+    agent.LLM = fake('{"en": "Gift Box", "tr": "Hediye Kutusu", "ru": "Подарочная коробка"}')
+    names = agent.translate_names("Hediye Kutusu")
+    cid = core.add_custom("Hediye Kutusu", 100, "gifts", "box", names=names)
+    p = core.product(cid)
+    assert (p["name_en"], p["name_tr"], p["name_ru"]) == ("Gift Box", "Hediye Kutusu", "Подарочная коробка")
+    agent.admin_entry(ADMIN, "/russian")
+    agent.LLM = fake("Заказ #5: 2 × Gift Box")
+    core.FEED.clear()
+    core.send_text(ADMIN, "Order #5: 2 x Hediye Kutusu")
+    assert core.FEED[-1]["body"] == "Заказ #5: 2 × Подарочная коробка"
+    agent.LLM = fake("boom")
+    core.FEED.clear()
+    core.send_text(ADMIN, "Something new happened here")  # translation text is whatever the LLM returned: never lost
+    assert core.FEED[-1]["body"]
+
+
+def test_time_ranges_store_the_start_and_keep_the_deadline_and_pickup_is_a_fixed_message():
+    p = core.product(pid("Teddy"))
+    oid = core.order_create(CUST, "Ayse", core.priced_lines([(p, 1)], CUST), "", "", "")
+    base = dict(sender_name="Ayse", sender_phone=CUST, recipient_name="Ali", recipient_phone="05331111111", address="Girne, Lemon street 5", delivery_date="2030-01-01", delivery_type="jet")
+    for start, end, want in (("09:00", "11:00", ("09:00", "11:00")), ("08:00", "22:00", ("08:00", "22:00")), ("17:00", "22:00", ("17:00", "22:00")), ("10:30", "", ("10:30", ""))):
+        row, _ = core.order_form_update(oid, **base, delivery_time=start, deliver_before=end)
+        assert (row["delivery_time"], core.before_of(row)) == want, (start, end)
+    assert core.dtime(row) == "10:30"
+    row, _ = core.order_form_update(oid, delivery_time="09:00", deliver_before="11:00")
+    assert core.dtime(row, 0) == "09:00 (must arrive before 11:00)" and "before: 11:00" in row["notes"]
+    row, calc = core.order_form_update(oid, delivery_time="09:00", deliver_before="23:00")  # jet ends at 22:00: not stored, the old range stays
+    assert core.before_of(row) == "11:00" and any("allowed hours" in x for x in calc["problems"])
+    row, _ = core.order_form_update(oid, delivery_type="pickup", delivery_time="08:00", deliver_before="23:00")
+    assert (row["delivery_time"], core.before_of(row)) == ("08:00", "23:00")
+    for bad in ("07:00", "23:30"):  # a pick-up time must be inside the opening hours
+        row, calc = core.order_form_update(oid, delivery_time=bad)
+        assert row["delivery_time"] == "08:00" and any("opening hours" in x for x in calc["problems"]), bad
+    row, _ = core.order_form_update(oid, delivery_time="14:00")
+    assert row["delivery_time"] == "14:00" and not core.before_of(row)
+    msg = core.render_form(row, "en")
+    assert "http" in msg and "Open every day" in msg and "your name" in msg and "Pick-up at the shop" in msg
+    assert "collect it" in core.pickup_block(row, "en") and "No pick-up fee" in core.pickup_block(row, "en")
+    row, _ = core.order_form_update(oid, delivery_type="normal")
+    assert not core.before_of(row)
+
+
+def test_a_date_change_on_an_order_with_a_planned_time_asks_about_the_time_first():
+    row = {"delivery_type": "jet", "delivery_time": "09:00", "delivery_date": "2030-01-01", "notes": " | before: 11:00"}
+    ask = agent.same_time_question
+    assert "ASK THE CUSTOMER" in ask(row, "2030-01-02", "", "", False)
+    assert not ask(row, "2030-01-02", "10:00", "", False) and not ask(row, "2030-01-02", "", "", True) and not ask(row, "2030-01-01", "", "", False)
+    assert not ask({**row, "delivery_type": "normal", "delivery_time": ""}, "2030-01-02", "", "", False)
+
+
+def test_details_given_before_any_item_are_kept_and_applied_when_the_order_exists():
+    t = tools()
+    out = t["update_order"].invoke({"note": "I love you", "recipient_name": "Lina"})
+    assert "SAVED for the order" in out and json.loads(core.kget("early:" + CUST))["note"] == "I love you"
+    agent.LLM = fake("noted")
+    t["place_order"].invoke({"items": [{"product_id": pid("Teddy"), "quantity": 1}]})
+    run(msg(text="ok that is all"))
+    row = core.open_order(CUST)
+    assert row and row["recipient_name"] == "Lina" and "note: I love you" in row["notes"] and not core.kget("early:" + CUST)
+
+
+def test_a_message_without_any_language_keeps_the_language_of_the_chat():
+    for line in ("iyi akşamlar", "gül istiyorum", "yarın için normal teslimat olsun"):
+        core.save(CUST, "user", line)
+    assert agent.lang_of(CUST, "gonderen feride numaraa 05338750537") == 1 and agent.reply_lang(CUST, "gonderen feride numaraa 05338750537") == "Turkish"
+    assert agent.lang_of(CUST, "buse yilmaz 5338775808 lefkosa ilhan savut sokak") == 1
+    core.CHAT.clear()
+    for line in ("good evening", "i want roses please"):
+        core.save(CUST, "user", line)
+    assert agent.lang_of(CUST, "Sara Ahmed 05551234567 Dereboyu 12") == 0
+    core.CHAT.clear()
+    core.save(CUST, "user", "добрый вечер, хочу розы")
+    assert agent.lang_of(CUST, "Сара 05551234567") == 2
+
+
+def test_canned_fast_replies_follow_the_language_of_the_chat():
+    import fast
+    for line in ("iyi akşamlar", "gül istiyorum"):
+        core.save(CUST, "user", line)
+    ans = fast.answer(CUST, "hii")
+    assert ans and "Merhaba" in ans[1] or ans and "Tekrar" in ans[1]  # a Turkish chat is greeted in Turkish
+    core.CHAT.clear()
+    core.save(CUST, "user", "добрый вечер, хочу розы")
+    assert fast.answer(CUST, "hii") is None and fast.split_head(CUST, "hi what are your hours")[0] == []  # Russian is left to the model
+
+
+def test_every_shown_list_is_kept_and_a_later_message_can_pick_from_any_of_them():
+    ids = [n["id"] for n in core.graph()[0].values() if n["type"] == "product" and PRICES.get(n.get("url"))][:9]
+    flowers, bears = ids[:5], ids[5:9]
+    lists_ = [{"n": 1, "items": [{"position": i, "id": p, "name": p} for i, p in enumerate(flowers, 1)]},
+              {"n": 2, "items": [{"position": i, "id": p, "name": p} for i, p in enumerate(bears, 1)]}]
+    core.kset("shownlists:" + CUST, json.dumps(lists_))
+    core.kset("suggestions:" + CUST, json.dumps(lists_[1]["items"]))
+    st = {"text": "the 3rd flower and the last 2 bears"}
+    st["lists"] = json.loads(core.kget("shownlists:" + CUST)); st["suggestions"] = lists_[1]["items"]
+    tool = {x.name: x for x in agent.make_tools(CUST, "Ayse", st)}["select_suggestions"]
+    out = tool.invoke({"picks": [{"list": 1, "positions": [3]}, {"list": 2, "positions": [3, 4]}]})
+    row = core.open_order(CUST)
+    assert row and len(core.row_lines(row)) == 3, out
+    assert {n for n, _, _ in core.row_lines(row)} == {core._nm(core.product(i)["name"]) for i in (flowers[2], bears[2], bears[3])}
+
+
+def test_a_loose_kind_word_points_at_the_item_of_that_kind_in_any_of_the_three_languages():
+    assert agent.kind_hits("the flower please", "roses") and agent.kind_hits("ayıcık olsun", "teddy bears") and agent.kind_hits("çikolata", "chocolate")
+    assert agent.kind_hits("мишку", "teddy bears") and agent.kind_hits("цветы", "orchids") and agent.kind_hits("the bear", "teddy bears")
+    assert not agent.kind_hits("the flower", "teddy bears") and not agent.kind_hits("the flower", "chocolate")
+
+
+def test_a_payment_that_was_just_confirmed_is_taken_back_when_the_owner_says_he_does_not_approve():
+    ready()
+    at()["decide_order"].invoke({"order_id": 1, "confirm": True})
+    at("confirm it")["confirm_payment_received"].invoke({"order_id": 1})
+    assert core.orders()[0]["status"] == "confirmed"
+    agent.LLM = fake("We could not verify your payment yet, please send a valid receipt.")
+    assert agent.receipt_decision(ADMIN, "onaylamıyoruz", {"oid": 1}, None)
+    row = core.orders()[0]
+    assert row["status"] == "awaiting_payment" and row["paid"] == ""
+    core.order_update(1, ("awaiting_payment",), status="confirmed", paid=row["payable"])
+    assert not agent.receipt_decision(ADMIN, "tamam", {"oid": 1}, None) and core.orders()[0]["status"] == "confirmed"  # a yes about a confirmed order does nothing
+
+
+def test_the_interpreter_actions_are_carried_out_by_code_in_the_flow_order():
+    ids = [n["id"] for n in core.graph()[0].values() if n["type"] == "product" and PRICES.get(n.get("url"))][:6]
+    lists_ = [{"n": 1, "items": [{"position": i, "id": p, "name": core.product(p)["name"]} for i, p in enumerate(ids[:3], 1)]},
+              {"n": 2, "items": [{"position": i, "id": p, "name": core.product(p)["name"]} for i, p in enumerate(ids[3:], 1)]}]
+    st = {"text": "x", "lists": lists_, "suggestions": lists_[1]["items"], "suggested_ids": set(ids[3:])}
+    tl = agent.make_tools(CUST, "Ayse", st)
+    d = {"language": "Arabic", "answer": "yes", "picks": [{"list": 1, "positions": [1, 3]}, {"list": 2, "positions": [3], "quantity": 2}],
+         "details": {"note": "I love you", "recipient_name": "Lina", "delivery_type": "pickup"}, "memo": "no pink please"}
+    done = agent.apply_interpretation(CUST, "خليني اخذ اول وحده و ثالث وحده", d, tl, st)
+    row = core.open_order(CUST)
+    assert {n for n, _, _ in core.row_lines(row)} == {core._nm(core.product(i)["name"]) for i in (ids[0], ids[2], ids[5])}
+    assert dict((n, q) for n, q, _ in core.row_lines(row))[core._nm(core.product(ids[5])["name"])] == 2
+    assert "note: I love you" in row["notes"] and "memo: no pink please" in row["notes"] and row["delivery_type"] == "pickup"
+    assert "Customer note: no pink please" in core.order_block(row)
+    assert not agent.is_yes(CUST, "خليني اخذ اول وحده و ثالث وحده") and core.kget("chatlang:" + CUST) == "Arabic"  # choosing items is never also a yes to the basket
+    agent.apply_interpretation(CUST, "نعم", {"answer": "yes"}, tl, st)
+    assert agent.is_yes(CUST, "نعم")  # a plain Arabic yes is a yes
+    done = agent.apply_interpretation(CUST, "remove the first", {"remove": [1]}, tl, st)
+    assert len(core.row_lines(core.open_order(CUST))) == 2
+    assert agent.apply_interpretation(CUST, "card", {"pay_by_card": True, "picks": [{"list": 1, "positions": [2]}]}, tl, st)[0][0] == "card_payment_links" and agent.card_on(CUST)
+
+
+def test_a_customer_never_gets_the_same_message_twice_in_a_row(monkeypatch):
+    monkeypatch.setenv("INTERPRET", "1")
+    core.save(CUST, "user", "hi")
+    core.save(CUST, "assistant", "Please send the missing details: recipient name.")
+    agent.LLM = fake("Thanks! I only still need the recipient's name 🌸")
+    for _ in range(3):  # rewrites that worked never call a teammate: the customer got a different message each time
+        assert agent.no_loop(CUST, "ok", "Please send the missing details: recipient name.") == "Thanks! I only still need the recipient's name 🌸"
+    agent.LLM = fake("Please send the missing details: recipient name.")  # the rewrite would repeat too: the same facts with other words, still no teammate
+    assert agent.no_loop(CUST, "ok", "Please send the missing details: recipient name.").startswith("Noted")
+    assert agent.no_loop(CUST, "ok", "Please send the missing details: recipient name.").startswith("Noted")
+    assert agent.no_loop(CUST, "ok", "Please send the missing details: recipient name.") in agent.HANDOVER  # a third failed rewrite: a teammate is called in
+    assert agent.no_loop(CUST, "ok", "Something new") == "Something new"
+
+
+def test_a_date_change_waiting_for_the_time_never_loses_the_other_details():
+    tools(CUST)["place_order"].invoke({"items": [{"product_id": pid("Teddy"), "quantity": 1}]})
+    oid = core.open_order(CUST)["order_id"]
+    core.order_form_update(oid, delivery_type="jet", delivery_date="2030-01-01", delivery_time="10:00")
+    out = tools(CUST)["update_order"].invoke({"delivery_date": "2030-01-02", "recipient_name": "Lina", "note": "I love you"})
+    row = core.order_row(oid)
+    assert "ASK THE CUSTOMER" in out and row["delivery_date"] == "2030-01-01"  # the date waits for the time question
+    assert row["recipient_name"] == "Lina" and "note: I love you" in row["notes"]  # everything else is saved now
+
+
+def test_prices_written_with_spaces_are_read_as_one_number_and_never_block_a_reply():
+    assert agent.amounts("ancien prix 5\u202f050 TL, maintenant *2\u202f800 TL*") == [5050.0, 2800.0]
+    assert agent.amounts("4 150 TL") == [4150.0] and 2800.0 in agent._nums("2\u00a0800 TL")
+
+
+def test_agreeing_to_bank_transfer_is_never_reported_as_a_payment():
+    ready()
+    at()["decide_order"].invoke({"order_id": 1, "confirm": True})
+    agent.PAID[(CUST, "ok fine iban then")] = False
+    out = {x.name: x for x in agent.make_tools(CUST, "Ayse", {"text": "ok fine iban then"})}["payment_sent"].invoke({"message": "ok fine iban then"})
+    assert "NOT DONE" in out and core.orders()[0]["status"] == "awaiting_payment"
+
+
+def test_for_themselves_can_be_switched_to_someone_else_and_back_at_any_step():
+    p = core.product(pid("Teddy"))
+    oid = core.order_create(CUST, "Ayse", core.priced_lines([(p, 1)], CUST), "", "", "")
+    row, _ = core.order_form_update(oid, sender_name="Ayse", sender_phone="05331111111", recipient_is_sender=True, address="Girne, Lemon street 5")
+    assert row["recipient_name"] == "Ayse" and not core.form_missing(row)
+    row, _ = core.order_form_update(oid, recipient_name="Lina", recipient_phone="05332223344")
+    assert "recipient = sender" not in row["notes"] and row["recipient_name"] == "Lina" and row["recipient_phone"] == "+905332223344"
+    row, _ = core.order_form_update(oid, recipient_is_sender=True)
+    assert row["recipient_name"] == "Ayse" and core.canon_phone(row["recipient_phone"]) == core.canon_phone(row["sender_phone"])
+
+
+def test_a_pasted_product_link_is_added_to_the_basket_at_any_step(monkeypatch):
+    monkeypatch.setenv("GRAPH_PATH", str(ROOT / "data/graph.json"))
+    sync_prices()
+    ps = agent.products_from_links("bunu istiyorum https://kibrisciceksepetim.com/en/products/12-kirmizi-gul-buketi?x=1 ve https://www.kibrisciceksepetim.com/tr/products/sevimli-ayicik-140cm/")
+    assert [p["name"] for p in ps] == ["12 Kırmızı Gül Buketi", "Sevimli Ayıcık 140cm"]
+    assert not agent.products_from_links("https://example.com/products/whatever")
+
+
+def test_the_recipient_phone_equal_to_the_sender_phone_means_for_themselves():
+    p = core.product(pid("Teddy"))
+    oid = core.order_create(CUST, "Ayse", core.priced_lines([(p, 1)], CUST), "", "", "")
+    row, _ = core.order_form_update(oid, sender_name="Ayse", sender_phone="05331111111", recipient_name="A friend", recipient_phone="+905331111111", address="Girne, Lemon street 5")
+    assert "recipient = sender" in row["notes"] and row["recipient_name"] == "Ayse"
+    assert "recipient name" not in core.form_missing(row) and "recipient phone" not in core.form_missing(row)
+
+
+def test_an_admin_translation_that_changes_any_number_is_never_sent():
+    agent.LLM = fake("Sipariş #5: toplam 1.850 TL")  # the model "localised" 1,750 into something else
+    assert agent.translate_for_admin("Order #5: total 1,750 TL", "tr") == "Order #5: total 1,750 TL"
+    agent.LLM = fake("Sipariş #5: toplam 1,750 TL")
+    assert agent.translate_for_admin("Order #5: total 1,751 TL", "tr") != "Sipariş #5: toplam 1,750 TL"
+    agent.LLM = fake("Sipariş #5: toplam 1,750 TL")
+    assert agent.translate_for_admin("Order #5: total 1,750 TL ", "tr") == "Sipariş #5: toplam 1,750 TL"
+
+
+def test_kill_and_resume_by_order_or_phone():
+    _ready_unpaid()
+    agent.admin_entry(ADMIN, "/kill #1")
+    assert core.q("SELECT 1 FROM paused WHERE phone=?", CUST)
+    agent.admin_entry(ADMIN, f"/resume {CUST}")
+    assert not core.q("SELECT 1 FROM paused WHERE phone=?", CUST)
+
+
 def test_an_ok_while_no_receipt_is_in_review_never_confirms_money():
     _ready_unpaid()
     agent.LLM = fake("ok")
@@ -6763,7 +7105,8 @@ def test_products_are_stored_in_russian_and_found_by_russian_words(monkeypatch):
     sync_prices()
     prods = [p for p in core.graph()[0].values() if p["type"] == "product"]
     ru = [p for p in prods if p.get("name_ru")]
-    assert len(ru) >= 250 and all(re.search(r"[Ѐ-ӿ]", p["name_ru"]) for p in ru if p["name_ru"] not in ("Pure Serenity",))
+    assert len(ru) == len(prods) > 200 and all(  # every product has its Russian name (the catalog size changes with each scrape)
+        re.search(r"[Ѐ-ӿ]", p["name_ru"]) for p in ru if p["name_ru"] not in ("Pure Serenity",))
     five = next(p for p in prods if p["name"] == "Seni Seviyorum 5'li Kırmızı Gül Buketi")
     assert core.display(five, "ru") == five["name_ru"] and "5" in five["name_ru"] and core.display(five, "en") == five["name_en"]
     assert core.brief(five, "both")["name_ru"] == five["name_ru"]
@@ -6811,9 +7154,9 @@ def test_once_the_items_are_confirmed_the_form_is_sent_whatever_the_model_wrote(
     assert len(agent.AFTER[CUST]) == n  # and only once
 
 
-def test_the_owner_is_never_asked_which_order_when_only_one_fits_and_the_order_the_assistant_named_is_current():
+def test_focused_confirmed_order_does_not_switch_to_another_pending_order():
     ready()
-    # order 1 was confirmed and paid long ago; order 2 waits for its first confirmation: "confirm it" with the model naming the wrong one still means #2
+    # The owner's current order stays authoritative even when another order is waiting.
     at()["decide_order"].invoke({"order_id": 1, "confirm": True})
     at("confirm it")["confirm_payment_received"].invoke({"order_id": 1})
     assert core.orders()[0]["status"] == "confirmed"
@@ -6821,7 +7164,7 @@ def test_the_owner_is_never_asked_which_order_when_only_one_fits_and_the_order_t
     core.order_form_update(2, sender_name="Ali", sender_phone="05301112233", recipient_name="Selin", recipient_phone="05331110000", address="Girne, Lemon street 5", delivery_date="2026-12-01", delivery_type="normal")
     agent.LLM = fake("ok")
     out = at("confirm it", fc={"oid": 1, "phone": CUST})["decide_order"].invoke({"order_id": 1, "confirm": True})  # the model (and the focus) still point at #1
-    assert core.orders()[1]["status"] == "awaiting_payment" and "not found or already decided" not in out  # #2 got its first confirmation
+    assert core.orders()[1]["status"] == "pending" and "not found or already decided" in out
     # a payment confirmation with no receipt: no order fits and nothing is touched
     assert core.orders()[0]["status"] == "confirmed"
     # the assistant's own reply names an order: that one is the current order from then on
@@ -6944,16 +7287,16 @@ def test_form_translation_is_reused_across_customers_without_translating_their_d
             return AIMessage(json.dumps({"template": source}))
     monkeypatch.setattr(agent, "LLM", Translator())
     core.order_create(CUST, "Hasan", [], "", "", "")
-    row, _ = core.order_form_update(1, sender_name="Hasan", sender_phone="05331112233", recipient_name="Farida", address="Iskele, Luna park 1", note="Happy birthday يا حبيبتي")
+    row, _ = core.order_form_update(1, sender_name="Hasan", sender_phone="05331112233", recipient_name="Nour", address="Iskele, Luna park 1", note="Happy birthday يا حبيبتي")
     core.kset("formlang:" + CUST, "ar")
     body = agent.localized_form(row, CUST)
-    assert "اسم المرسل: Hasan" in body and "اسم المستلم: Farida" in body and "+905331112233" in body
+    assert "اسم المرسل: Hasan" in body and "اسم المستلم: Nour" in body and "+905331112233" in body
     assert "Iskele, Luna park 1" in body and "Happy birthday يا حبيبتي" in body
     core.kset("formlang:905330009999", "ar")
     assert agent.localized_form(dict(row, sender_name="Another customer"), "905330009999") != body
     assert len(calls) == 1
     payload = calls[0][-1].content
-    assert "Hasan" not in payload and "Farida" not in payload and "Luna park" not in payload and "Happy birthday" not in payload
+    assert "Hasan" not in payload and "Nour" not in payload and "Luna park" not in payload and "Happy birthday" not in payload
 
 
 def test_changing_form_language_refreshes_the_queued_form_without_duplicate_messages(monkeypatch):
@@ -6989,8 +7332,9 @@ def test_admin_form_uses_each_admins_language_independently_of_customer(monkeypa
     monkeypatch.setenv("ADMIN_NUMBERS", ADMIN + "," + other)
     core.kset("seen:" + ADMIN, time.time())
     core.kset("seen:" + other, time.time())
-    core.kset("formlang:" + ADMIN, "tr")
-    core.kset("formlang:" + other, "ru")
+    monkeypatch.setattr(core, "ADMIN_TRANSLATE", None)  # (the fake LLM would answer "ok" to every card)
+    core.kset("adminlang:" + ADMIN, "tr")
+    core.kset("adminlang:" + other, "ru")
     core.kset("formlang:" + CUST, "en")
     ready()
     first = next(e["body"] for e in sent(ADMIN) if "READY for your first confirmation" in e["body"])
@@ -7022,7 +7366,7 @@ def test_other_languages_are_selected_before_the_normal_order_turn(monkeypatch):
             return self
     model = LanguageModel(responses=[AIMessage("", tool_calls=[{"name": "choose_form_language", "args": {"language": "fr"}, "id": "language"}]), AIMessage(json.dumps({"template": source})), AIMessage("Bonjour 🌸")])
     monkeypatch.setattr(agent, "LLM", model)
-    agent.run_agent(CUST, "Hasan", "Je m'appelle Hasan et la destinataire s'appelle Farida")
+    agent.run_agent(CUST, "Hasan", "Je m'appelle Hasan et la destinataire s'appelle Nour")
     assert bindings[0] == (["choose_form_language"], {"tool_choice": "choose_form_language", "parallel_tool_calls": False})
     assert core.kget("formlang:" + CUST) == "fr"
     assert any("Expéditeur:" in text for text in agent.AFTER[CUST])
@@ -7052,10 +7396,10 @@ def test_confirmed_basket_collects_missing_name_then_delivery_and_hands_off_to_d
     out = {x.name: x for x in agent.make_tools(CUST, "Ayse", {"text": "yes"})}["confirm_order_details"].invoke({})
     assert "SUBMITTED" in out and core.kget("subm:1")
     live = core.alog_read("live")
-    assert any(e["kind"] == "document" and "Sales order #1" in e["body"] for e in live)
+    assert any(e["kind"] == "document" and "Order request #1" in e["body"] for e in live)
     assert sum("READY for your first confirmation" in e["body"] for e in live) == 1
     assert any("Your name: Ali" in e["body"] for e in live)
-    assert core.orders()[0]["status"] == "pending" and not sent(CUST)[-1]["body"].startswith("Quotation")
+    assert core.orders()[0]["status"] == "pending" and not sent(CUST)[-1]["body"].startswith("Invoice")
     tools()["update_order"].invoke({"sender_name": "Ali"})
     assert sum("READY for your first confirmation" in e["body"] for e in core.alog_read("live")) == 1
 
@@ -7104,7 +7448,7 @@ def test_waha_transport_files_and_media_do_not_leak_api_key(monkeypatch, tmp_pat
     tx = waha.Waha()
     assert tx.send_text(CUST, "hello") == "sent-id"
     assert calls[-1][1]["json"]["chatId"] == CUST + "@c.us"
-    f = tmp_path / "invoice.pdf"; f.write_bytes(b"pdf")
+    f = tmp_path / "receipt.pdf"; f.write_bytes(b"pdf")
     assert tx.send_doc(CUST, f) == "sent-id"
     assert base64.b64decode(calls[-1][1]["json"]["file"]["data"]) == b"pdf"
     assert calls[-1][0].endswith("/api/sendFile")
@@ -7146,7 +7490,7 @@ def test_time_change_before_final_confirmation_updates_the_recap_and_sent_order(
     assert not any("Question for you" in e["body"] for e in sent(ADMIN))
     core.save(CUST, "assistant", review)
     agent.run_agent(CUST, "Ali", "yes, everything is correct")
-    assert core.kget("subm:1") and any(e["kind"] == "document" and "Sales order #1" in e["body"] for e in sent(ADMIN))
+    assert core.kget("subm:1") and any(e["kind"] == "document" and "Order request #1" in e["body"] for e in sent(ADMIN))
 
 
 @pytest.mark.parametrize("paid", [False, True])
@@ -7173,7 +7517,7 @@ def test_time_change_after_admin_confirmation_is_only_a_proposal_until_approval(
         assert core.change_state(updated) == "awaiting_difference"
     else:
         assert updated["delivery_type"] == "jet" and not updated["change_request"]
-        assert any(e["kind"] == "document" and "Quotation" in e["body"] for e in sent(CUST))
+        assert any(e["kind"] == "document" and "Invoice" in e["body"] for e in sent(CUST))
 
 
 def test_time_only_form_update_infers_jet_but_explicit_normal_clears_time():
@@ -7202,7 +7546,7 @@ def test_explicit_add_on_inherits_jet_shipment_and_documents_keep_the_time(monke
     assert core.order_row(1) == original
     core.save(CUST, "assistant", f"Add-on basket: {core._items_text(row)}. Goods total {core.fmt_tl(row['subtotal'])}. Is this everything?")
     recap = tools()["confirm_item_list"].invoke({})
-    assert "MANDATORY PERSONAL FORM" in recap and agent.AFTER.get(CUST)
+    assert "recap is ready" in recap and not agent.AFTER.get(CUST)  # every detail is inherited: no form and no "confirm these details", straight to the recap
     core.kset("formack:2", "1")
     tools()["send_order_form"].invoke({})  # continue from the completed prefilled form to the final recap
     core.kset("formsent:2", time.time())
@@ -7210,7 +7554,7 @@ def test_explicit_add_on_inherits_jet_shipment_and_documents_keep_the_time(monke
     core.save(CUST, "assistant", agent.order_review_reply(row, 0))
     result = {x.name: x for x in agent.make_tools(CUST, "Ayse", {"text": "yes"})}["confirm_order_details"].invoke({})
     assert core.kget("subm:2"), (result, recap, core.kget("bok:2"), core.kget("formack:2"), core.kget("detailcheck:2"), core.submission_missing(core.order_row(2)))
-    for kind in ("salesorder", "quotation"):
+    for kind in ("orderrequest", "invoice"):
         data = json.dumps(docs_pdf.doc_data(core.order_row(2), kind, "bi"), ensure_ascii=False, default=str)
         assert "17:00" in data and "jet" in data.lower()
 
@@ -7318,7 +7662,7 @@ def test_pickup_during_the_form_skips_delivery_type_step(monkeypatch):
     t["update_order"].invoke({"pickup": True})
     assert len(agent.AFTER[CUST]) == 1
     form = agent.AFTER[CUST][0]
-    assert "Name:" in form and "Pick-up date:" not in form and "Pick-up time:" not in form
+    assert "Pick-up at the shop" in form and "your name" in form and "Name:" not in form  # no form any more: a fixed message asking them to write name, phone, day and time
     assert "Delivery address:" not in form and "Recipient" not in form and "City" not in form
     agent.flush_after(CUST)
     t["update_order"].invoke({"sender_name": "Ali", "delivery_date": "tomorrow"})
@@ -7331,11 +7675,11 @@ def test_pickup_during_the_form_skips_delivery_type_step(monkeypatch):
     core.save(CUST, "assistant", recap)
     {x.name: x for x in agent.make_tools(CUST, "Ayse", {"text": "yes"})}["confirm_order_details"].invoke({})
     assert core.kget("subm:1")
-    for kind in ("quotation", "invoice", "salesorder"):
+    for kind in ("invoice", "receipt", "orderrequest"):
         assert "17:00" in dict(docs_pdf.info(row, kind, "en"))["when"]
     for lang in ("en", "tr", "ru"):
         rendered = core.render_form(row, lang)
-        assert "Ali" in rendered and "17:00" not in rendered and "tomorrow" not in rendered
+        assert "17:00" not in rendered and "tomorrow" not in rendered and "http" in rendered
 
 
 def test_choosing_pickup_discards_jet_time_but_keeps_new_pickup_time():
@@ -7385,7 +7729,7 @@ def test_complete_sales_order_is_attached_in_dashboard_even_when_whatsapp_window
     core.kset("seen:" + ADMIN, 0)
     core.FEED.clear()
     assert not agent.send_sales_order(core.order_row(1))
-    assert any(e["kind"] == "document" and "Sales order #1" in e["body"] for e in sent("dashboard"))
+    assert any(e["kind"] == "document" and "Order request #1" in e["body"] for e in sent("dashboard"))
     assert not any(e["kind"] == "document" for e in sent(ADMIN))
 
 def test_official_whatsapp_reply_id_recovers_old_message_after_restart(monkeypatch):
@@ -7485,3 +7829,1084 @@ def test_unavailable_message_is_sent_only_when_the_owner_chose_it_and_nothing_is
     run(msg(text="i want roses"))
     assert not sent(CUST) and agent.LLM.calls == 0 and not core.orders()  # the owner said no message: silence, still no order
     agent.resume_now(); core.inbox_drop_held()
+
+
+def test_more_than_three_options_are_a_numbered_list_not_photos():
+    assert agent.PHOTO_MAX == 3  # up to three options go out as photos; four or more are one numbered text list unless photos are asked for
+
+
+def test_hours_yes_no_foreign_and_pinned_price_helpers(tmp_path, monkeypatch):
+    monkeypatch.setenv("STATE_DIR", str(tmp_path))
+    assert agent.asked_hour("can you deliver at 2am tonight?") == 2 and agent.asked_hour("tomorrow at 7am") == 7 and agent.asked_hour("at 15:30") == 15
+    assert agent.asked_hour("I want 15 roses at 5") is None and agent.asked_hour("between 3 and 5") is None
+    assert agent.YESQ.match("do you have red roses?") and agent.YESQ.match("kırmızı gül var mı?") and not agent.YESQ.match("I want roses")
+    assert core.FOREIGN.search(core.fold("deliver to Limassol")) and core.FOREIGN.search(core.fold("my mother in Dubai")) and not core.FOREIGN.search(core.fold("Girne, Karakum Cad, near Lefkoşa road"))
+    import fast
+    assert fast._num("1.500") == 1500 and fast._num("1,500") == 1500 and fast._num("2,5") == 2.5
+    cid = core.add_custom("Lavender Box", 1200, "plants", "lavender in a wooden box")
+    p = next(x for x in core.graph()[0].values() if x.get("id") == cid)
+    assert core.live_prices([p])[cid]["price"] == 1200
+    core.set_override(cid, "price", "1300")
+    p = next(x for x in core.graph()[0].values() if x.get("id") == cid)
+    assert core.live_prices([p])[cid]["price"] == 1300  # a price the owner pinned wins on his own items too
+
+
+def test_far_dates_are_found_and_near_ones_are_not():
+    import fast
+    from datetime import date
+    t = date(2026, 11, 22)
+    assert fast.far_date("I want roses delivered on 25 December to Girne", t) == date(2026, 12, 25)
+    assert fast.far_date("send them december 25th", t) == date(2026, 12, 25) and fast.far_date("deliver 25.12", t) == date(2026, 12, 25)
+    assert fast.far_date("deliver tomorrow", t) is None and fast.far_date("on 24 November please", t) is None and fast.far_date("12 red roses, call 0533 111 22 33", t) is None
+
+
+def test_delivery_today_after_the_run_and_after_the_jet_cutoff(tmp_path, monkeypatch):
+    from datetime import datetime
+    monkeypatch.setenv("STATE_DIR", str(tmp_path)); monkeypatch.setenv("DATE_RULES", "1")
+    at_ = lambda h, m=0: monkeypatch.setattr(core, "now", lambda: datetime(2026, 11, 23, h, m))
+    at_(9)
+    assert core.today_answer(0, "girne").startswith("Yes")
+    at_(16)  # the 13:00 run has left: no standard delivery today, a jet REQUEST is still possible
+    ans = core.today_answer(0, "girne")
+    assert ans.startswith("No") and "jet" in ans and "all deliveries are done" not in ans
+    row = {**{k: "" for k in core.OCOLS}, "delivery_date": "2026-11-23", "delivery_type": "normal", "address": "Girne, Karakum 5", "delivery_area": "girne"}
+    area = core._json("delivery.json")["areas"]["girne"]
+    assert core.today_problems(row, area)  # normal delivery for today is refused after its time
+    assert core.today_problems({**row, "delivery_date": "2026-11-24"}, area) == []  # tomorrow is fine
+    at_(22, 30)  # after the jet cutoff: nothing is possible today, tomorrow is offered with the standard run and the jet window
+    ans = core.today_answer(0, "girne")
+    assert "all deliveries are done" in ans and "tomorrow" in ans and "13:00" in ans and "jet" in ans and "22:00" in ans
+    assert core.jet_time_issue({"delivery_date": "2026-11-23", "delivery_time": "23:00"}) == "cutoff" and core.jet_time_issue({"delivery_date": "2026-11-23", "delivery_time": "22:00"}) == "past"
+    assert core.jet_time_issue({"delivery_date": "2026-11-24", "delivery_time": "14:00"}) == ""
+
+
+def test_a_custom_quote_is_never_forced_through_in_the_turn_the_catalog_matches_were_found():
+    t = {x.name: x for x in agent.make_tools(CUST, "Ayse", {"text": "25 red roses var mı"})}  # one customer message = one turn state
+    first = t["request_quote"].invoke({"other_items": "25 red roses"})
+    assert first.startswith("NOT SENT") and "Red Roses Bouquet 25" in first
+    again = t["request_quote"].invoke({"other_items": "25 red roses", "confirm_custom": True})  # the model overrides at once, before the customer saw the items
+    assert again.startswith("NOT SENT: show the customer") and not core.orders()
+    later = {x.name: x for x in agent.make_tools(CUST, "Ayse", {"text": "no, I want a custom one with 25 roses and gold paper"})}  # a later message: they saw the items and still want custom
+    assert "QUOTE REQUEST" in later["request_quote"].invoke({"other_items": "25 red roses with gold paper", "confirm_custom": True}) and core.orders()[0]["status"] == "quote"
+
+
+def test_owner_confirm_on_the_only_order_waiting_for_a_price_is_never_asked_which_order():
+    tools()["request_quote"].invoke({"other_items": "10 roses in a heart box", "confirm_custom": True})
+    assert core.orders()[0]["status"] == "quote"
+    for amb in (None, {"oid": None, "phone": CUST}):  # a newer alert about the same customer made the focus ambiguous
+        out = at("onayla", {"oid": 1, "phone": CUST}, amb)["decide_order"].invoke({"order_id": 1, "confirm": True})
+        assert "has no price yet" in out and "not clear which order" not in out
+
+
+def test_a_basket_change_in_the_message_that_sends_the_form_still_shows_the_items_and_total(monkeypatch):
+    p = core.product(pid("Teddy Bear 40cm"))
+    call = AIMessage("", tool_calls=[{"name": "place_order", "args": {"items": [{"product_id": p["id"], "quantity": 1}], "recipient_name": "Mehmet"}, "id": "po"}])
+    note = AIMessage("", tool_calls=[{"name": "update_order", "args": {"note": "Happy birthday"}, "id": "uo"}])  # a card message with the items: the basket counts as complete, the form goes out
+    monkeypatch.setattr(agent, "LLM", fake(call, note, "ok"))
+    reply = agent.run_agent(CUST, "Ayse", "Teddy Bear 40cm with Pink Roses for Mehmet please, the card says Happy birthday")
+    total = core.fmt_tl(core.open_order(CUST)["subtotal"])
+    assert core.display(p, "en") in reply and total in reply  # the new basket and its total come first
+    assert "missing" in reply.lower()  # then the fixed form text
+
+
+def test_a_request_for_a_kind_of_product_never_puts_the_whole_shown_list_in_the_basket():
+    ps = [p for p in core.graph()[0].values() if p.get("type") == "product" and p.get("available") is not False][:4]
+    sug = [{"position": i, "id": p["id"], "name": p["name"]} for i, p in enumerate(ps, 1)]
+    st = {"text": "gul buketı olsun kırmızı", "photos": {}, "suggestions": sug}
+    tl = agent.make_tools(CUST, "Ayse", st)
+    agent.apply_interpretation(CUST, st["text"], {"language": "Turkish"}, tl, st)  # the reader found no choice in the message
+    out = {t.name: t for t in tl}["select_suggestions"].invoke({"positions": [1, 2, 3, 4]})
+    assert out.startswith("NOT PLACED: the customer's message chooses none") and not core.open_order(CUST)
+    assert {t.name: t for t in tl}["select_suggestions"].invoke({"positions": [2]}).startswith("NOT PLACED")  # a question / wish picks nothing, not even one item
+    st_n = {"text": ps[1]["name"] + " olsun", "photos": {}, "suggestions": sug}  # the item NAMED in the message: added even when the reader missed it
+    tl_n = agent.make_tools(CUST, "Ayse", st_n)
+    agent.apply_interpretation(CUST, st_n["text"], {"language": "Turkish"}, tl_n, st_n)
+    assert {t.name: t for t in tl_n}["select_suggestions"].invoke({"positions": [2]}).startswith("ORDER #")
+    st2 = {"text": "ilk ikisi", "photos": {}, "suggestions": sug}
+    tl2 = agent.make_tools("905330000777", "Ali", st2)
+    agent.apply_interpretation("905330000777", st2["text"], {"language": "Turkish", "picks": [{"list": 0, "positions": [1, 2]}]}, tl2, st2)  # a real choice of two
+    assert len(core.row_lines(core.open_order("905330000777"))) == 2
+
+
+def test_a_product_wish_is_never_saved_as_a_team_memo():
+    p = next(p for p in core.graph()[0].values() if p.get("type") == "product" and p.get("available") is not False)
+    {t.name: t for t in agent.make_tools(CUST, "Ayse", {"text": "x"})}["place_order"].invoke({"items": [{"product_id": p["id"], "quantity": 1}]})
+    for text, memo in ((p["name"] + " istiyorum", p["name"] + " istiyor"), ("13 red roses please", p["name"])):
+        st = {"text": text, "photos": {}}
+        agent.apply_interpretation(CUST, text, {"language": "Turkish", "memo": memo}, agent.make_tools(CUST, "Ayse", st), st)
+        assert "memo" not in core.open_order(CUST)["notes"]
+    st = {"text": "kapıyı çalmayın, arayın", "photos": {}}
+    agent.apply_interpretation(CUST, st["text"], {"language": "Turkish", "memo": "kapıyı çalmayın, arayın"}, agent.make_tools(CUST, "Ayse", st), st)
+    assert "memo: kapıyı çalmayın, arayın" in core.open_order(CUST)["notes"]
+
+
+def test_a_question_about_a_product_never_puts_it_in_the_basket():
+    p = core.product(pid("Teddy Bear 40cm"))
+    st = {"text": "do you have teddies?", "photos": {}}
+    tl = agent.make_tools(CUST, "Ayse", st)
+    agent.apply_interpretation(CUST, st["text"], {"language": "English"}, tl, st)  # a question: no choice read
+    assert {t.name: t for t in tl}["place_order"].invoke({"items": [{"product_id": p["id"], "quantity": 1}]}).startswith("NOT PLACED: the customer's message chooses nothing") and not core.open_order(CUST)
+    st = {"text": "Teddy Bear 40cm with Pink Roses olsun", "photos": {}}  # named by the customer: added even when the reader missed it
+    tl = agent.make_tools(CUST, "Ayse", st)
+    agent.apply_interpretation(CUST, st["text"], {"language": "Turkish"}, tl, st)
+    assert {t.name: t for t in tl}["place_order"].invoke({"items": [{"product_id": p["id"], "quantity": 1}]}).startswith("ORDER #")
+    st = {"text": "yes", "photos": {}}  # a yes to "shall I add it?" adds it
+    tl = agent.make_tools("905330000888", "Ali", st)
+    agent.apply_interpretation("905330000888", "yes", {"language": "English", "answer": "yes"}, tl, st)
+    assert {t.name: t for t in tl}["place_order"].invoke({"items": [{"product_id": p["id"], "quantity": 1}]}).startswith("ORDER #")
+
+
+def test_a_card_note_is_only_ever_the_customers_own_words():
+    p = core.product(pid("Teddy Bear 40cm"))
+    {t.name: t for t in agent.make_tools(CUST, "Ayse", {"text": "x"})}["place_order"].invoke({"items": [{"product_id": p["id"], "quantity": 1}]})
+    core.save(CUST, "user", "tamamdır bir de not ekleyelim")
+    t = {x.name: x for x in agent.make_tools(CUST, "Ayse", {"text": "tamamdır bir de not ekleyelim"})}
+    t["update_order"].invoke({"note": "Customer wants to add a card note; note text not provided yet."})
+    assert "Customer wants" not in json.dumps(core.open_order(CUST), ensure_ascii=False)
+    core.save(CUST, "user", "seni seviyorum yazalım nota")
+    t = {x.name: x for x in agent.make_tools(CUST, "Ayse", {"text": "seni seviyorum yazalım nota"})}
+    t["update_order"].invoke({"note": "Seni seviyorum"})
+    assert "Seni seviyorum" in json.dumps(core.open_order(CUST), ensure_ascii=False)
+
+
+def test_the_form_language_never_switches_away_from_the_language_the_message_is_in():
+    st = {"text": "abi", "photos": {}}
+    tl = agent.make_tools(CUST, "Ayse", st)
+    agent.apply_interpretation(CUST, "abi", {"language": "Turkish"}, tl, st)
+    t = {x.name: x for x in tl}["choose_form_language"]
+    assert t.invoke({"language": "en"}).startswith("NOT CHANGED") and core.kget("formlang:" + CUST) != "en"
+    assert t.invoke({"language": "tr"}) == "FORM LANGUAGE SAVED: tr"
+    st2 = {"text": "ok", "photos": {}}  # no language in the message: the agent decides as before
+    tl2 = agent.make_tools(CUST, "Ayse", st2)
+    agent.apply_interpretation(CUST, "ok", {"language": ""}, tl2, st2)
+    assert {x.name: x for x in tl2}["choose_form_language"].invoke({"language": "fr"}) == "FORM LANGUAGE SAVED: fr"
+
+
+def test_a_wish_for_a_card_note_without_its_text_gets_asked_what_to_write(monkeypatch):
+    p = core.product(pid("Teddy Bear 40cm"))
+    {t.name: t for t in agent.make_tools(CUST, "Ayse", {"text": "x"})}["place_order"].invoke({"items": [{"product_id": p["id"], "quantity": 1}]})
+    monkeypatch.setattr(agent, "interpret_message", lambda ph, tx, st: {"language": "Turkish", "answer": "yes", "wants_note": True})
+    monkeypatch.setattr(agent, "LLM", fake("Lütfen yalnızca formdaki eksik bilgileri gönderin: alıcı adı."))
+    core.kset("chatlang:" + CUST, "Turkish")
+    reply = agent.run_agent(CUST, "Ayse", "tamamdır bir de not ekleyelim")
+    assert reply.endswith("Kartta ne yazsın?") and "note:" not in core.open_order(CUST)["notes"]
+
+
+def test_fixed_english_texts_reach_a_french_customer_in_french_with_every_number_kept(monkeypatch):
+    core.kset("formlang:" + CUST, "fr")
+    en = "Your basket:\n• 1 × 25 Red Rose Bouquet\n\nGoods total: 4,300 TL.\nWould you like anything else, or is this basket complete? 🌸"
+    monkeypatch.setattr(agent, "LLM", fake("Votre panier :\n• 1 × 25 Red Rose Bouquet\n\nTotal des articles : 4,300 TL.\nSouhaitez-vous autre chose, ou le panier est-il complet ? 🌸"))
+    agent.reply(CUST, en)
+    assert sent(CUST)[-1]["body"].startswith("Votre panier") and "4,300 TL" in sent(CUST)[-1]["body"]
+    monkeypatch.setattr(agent, "LLM", fake("Votre panier : 1 × 25 roses, total 4,500 TL."))  # a translation that changes a price is never sent
+    agent.reply(CUST, en.replace("4,300", "4,200"))
+    assert "4,200 TL" in sent(CUST)[-1]["body"] and sent(CUST)[-1]["body"].startswith("Your basket")
+    core.kset("formlang:" + CUST, "en")
+    monkeypatch.setattr(agent, "LLM", fake("SHOULD NOT BE USED"))
+    agent.reply(CUST, en)  # an English customer gets the text as it is
+    assert sent(CUST)[-1]["body"].startswith("Your basket")
+
+
+def test_a_new_date_on_a_confirmed_order_becomes_a_change_request_and_the_same_time_answer_completes_it():
+    ready(**{"delivery_type": "jet", "delivery_time": "18:00"})
+    at()["decide_order"].invoke({"order_id": 1, "confirm": True})
+    assert core.orders()[0]["status"] == "awaiting_payment"
+    t = {x.name: x for x in agent.make_tools(CUST, "Ayse", {"text": "can we move it to the day after?"})}
+    import datetime as _dt
+    new = (core.now().date() + _dt.timedelta(days=2)).isoformat()
+    assert "NOT DONE" in t["request_change"].invoke({"order_id": 1, "delivery_date": new})  # the time question first
+    t = {x.name: x for x in agent.make_tools(CUST, "Ayse", {"text": "yes, the same time"})}
+    out = t["update_order"].invoke({"delivery_time": "18:00"})  # the model reaches for update_order: it still becomes the change request
+    req = json.loads(core.orders()[0]["change_request"] or "{}")
+    assert req.get("details", {}).get("delivery_date") == new, out
+    assert not core.kget("early:" + CUST)  # never stored as details for some future order
+
+
+def test_a_french_customer_saying_oui_to_the_translated_recap_submits_the_order(monkeypatch):
+    ready_for_confirmation()
+    core.kset("formlang:" + CUST, "fr")
+    rec = agent.order_review_reply(core.open_order(CUST), 0)
+    fr = "Veuillez vérifier votre commande 🌸\n" + "\n".join(re.sub(r"[A-Za-z]", "x", l) if not re.search(r"\d", l) else l for l in rec.split("\n")[1:])
+    monkeypatch.setattr(agent, "LLM", fake(fr))
+    agent.reply(CUST, rec)  # she receives the recap in French (cached translation)
+    assert core.history(CUST)[-1][1].startswith("Veuillez")
+    agent.ANSWERS[(CUST, "oui")] = "yes"  # what the interpreter reads in "oui"
+    out = {t.name: t for t in agent.make_tools(CUST, "Ayse", {"text": "oui"})}["confirm_order_details"].invoke({})
+    assert core.kget("subm:1"), out
+
+
+def test_the_customers_own_basket_total_is_never_an_unverified_price():
+    from langchain_core.messages import HumanMessage
+    draft_ready()
+    total = core.fmt_tl(core.open_order(CUST)["total"])
+    msgs = [HumanMessage("صح"), AIMessage(f"سلتك جاهزة، الإجمالي {total} 🌸")]
+    assert not agent.ungrounded_why(msgs, CUST) and agent.ungrounded_why(msgs)  # a fact of her own order; without the order it is unverified
+    assert agent.ungrounded_why([HumanMessage("x"), AIMessage("الإجمالي 99,999 TL")], CUST)  # an invented amount is still blocked
+
+
+def test_no_extra_owner_alert_when_the_team_already_has_the_order(monkeypatch):
+    ready()  # submitted: the team has it
+    monkeypatch.setattr(agent, "interpret_message", lambda ph, tx, st: {"language": "English", "answer": "yes"})
+    n0 = len(sent(ADMIN))
+    monkeypatch.setattr(agent, "LLM", fake("Your order is already with the team 🌸 They will get back to you shortly."))
+    agent.run_agent(CUST, "Ayse", "yes correct, send it")
+    assert len(sent(ADMIN)) == n0  # nothing new for the owner to do
+    other = "905000000909"
+    monkeypatch.setattr(agent, "LLM", fake("Let me check with the team and get back to you shortly 🌸"))
+    agent.run_agent(other, "Ali", "do you deliver to Paphos?")
+    assert len(sent(ADMIN)) > n0  # no order anywhere: the owner is still told
+
+
+def test_the_owners_ok_to_a_cancel_request_never_undoes_the_payment():
+    ready()
+    at()["decide_order"].invoke({"order_id": 1, "confirm": True})
+    at("confirm it")["confirm_payment_received"].invoke({"order_id": 1})
+    tools(CUST)["request_change"].invoke({"cancel": True, "reason": "plans changed"})
+    assert core.orders()[0]["change_request"] and core.is_paid(core.orders()[0])
+    assert agent.receipt_decision(ADMIN, "iptali onayla", {"oid": 1}, None) is False  # left to the assistant: approve / reject the REQUEST
+    assert core.is_paid(core.orders()[0]) and core.orders()[0]["status"] == "confirmed"
+
+
+def test_a_clear_yes_to_the_exact_recap_submits_even_when_the_model_forgets(monkeypatch):
+    ready_for_confirmation()
+    monkeypatch.setattr(agent, "interpret_message", lambda ph, tx, st: {"language": "French", "answer": "yes"})
+    monkeypatch.setattr(agent, "LLM", fake("Merci 🌸"))  # no tool call at all
+    agent.run_agent(CUST, "Ayse", "oui")
+    assert core.kget("subm:1") == agent.submitted_signature(core.open_order(CUST))
+
+
+def test_a_turkish_product_name_never_reaches_an_english_or_russian_customer():
+    p = core.product(pid("Kırmızı Güller"))
+    p.update(name_tr="Kırmızı Güller Buketi", name_en="Red Roses Bouquet", name_ru="Букет красных роз")  # the real catalog has all three names
+    core.kset("formlang:" + CUST, "en")
+    agent.reply(CUST, f"Sure 🌸 I added 1 × *{p['name_tr']}* to your order.")
+    assert p["name_tr"] not in sent(CUST)[-1]["body"] and core.display(p, "en") in sent(CUST)[-1]["body"]
+    core.kset("formlang:" + CUST, "tr")
+    agent.reply(CUST, f"1 × {p['name_tr']} sepetinizde.")
+    assert p["name_tr"] in sent(CUST)[-1]["body"]  # a Turkish customer keeps the Turkish name
+
+
+def test_an_ordinal_with_a_kind_is_counted_by_code_within_that_kind():
+    flowers = [p for p in core.graph()[0].values() if p.get("type") == "product" and p.get("category") in ("roses", "daisies", "lilies", "orchids") and p.get("available") is not False][:5]
+    bear = core.product(pid("Teddy Bear 40cm"))
+    items = [{"position": 1, "id": bear["id"], "name": bear["name"], "category": "teddy bears"}]
+    items += [{"position": i, "id": p["id"], "name": p["name"], "category": p["category"]} for i, p in enumerate(flowers, 2)]
+    st = {"text": "3. çiçek ve son ayıcık", "photos": {}, "lists": [{"n": 1, "items": items}], "suggestions": items}
+    out = {t.name: t for t in agent.make_tools(CUST, "Ayse", st)}["select_suggestions"].invoke({"picks": [{"list": 1, "kind": "çiçek", "positions": [3]}, {"list": 1, "kind": "ayıcık", "last": 1}]})
+    names = {core._nm(n) for n, _, _ in core.row_lines(core.open_order(CUST))}
+    assert names == {core._nm(flowers[2]["name"]), core._nm(bear["name"])}, out  # the 3rd FLOWER is list position 4, not 3
+    other = "905000000321"  # the same picks read by the interpreter go through the same code
+    st2 = {"text": "the 2nd flower", "photos": {}, "lists": [{"n": 1, "items": items}], "suggestions": items}
+    tl2 = agent.make_tools(other, "Ali", st2)
+    agent.apply_interpretation(other, st2["text"], {"language": "English", "picks": [{"list": 1, "kind": "flower", "positions": [2]}]}, tl2, st2)
+    assert {core._nm(n) for n, _, _ in core.row_lines(core.open_order(other))} == {core._nm(flowers[1]["name"])}
+
+
+def test_the_options_shown_follow_the_counts_the_customer_asked_for(monkeypatch):
+    monkeypatch.setattr(core, "product_jpeg", lambda p: b"\xff\xd8fake")
+    flowers = [p for p in core.graph()[0].values() if p.get("type") == "product" and p.get("category") in ("roses", "daisies", "lilies", "orchids") and p.get("available") is not False]
+    choc = [p for p in core.graph()[0].values() if p.get("type") == "product" and p.get("category") == "chocolate"]
+    assert len(flowers) >= 4 and choc
+    monkeypatch.setattr(agent, "interpret_message", lambda ph, tx, st: {"language": "English", "show": [{"kind": "chocolate", "count": 1}, {"kind": "flower", "count": 2}]})
+    monkeypatch.setattr(agent, "LLM", fake("Here you go 🌸 " + ", ".join(p["name"] for p in flowers[:4] + choc[:1])))
+    agent.run_agent(CUST, "Ayse", "show me 1 chocolate and 2 flowers")
+    shown = json.loads(core.kget(f"suggestions:{CUST}") or "[]")
+    assert [core.product(x["id"])["category"] for x in shown][:1] == ["chocolate"] and len(shown) == 3, shown
+    monkeypatch.setattr(agent, "interpret_message", lambda ph, tx, st: {"language": "English", "show": [{"kind": "flower", "count": 4}]})
+    monkeypatch.setattr(agent, "LLM", fake("Here you go 🌸 " + ", ".join(p["name"] for p in flowers[:2])))  # the model found only 2
+    agent.run_agent("905000000432", "Ali", "show me 4 flowers")
+    shown = json.loads(core.kget("suggestions:905000000432") or "[]")
+    assert len(shown) == 4 and all(core.product(x["id"])["category"] in ("roses", "daisies", "lilies", "orchids", "plants", "wreaths", "other") for x in shown), shown  # topped up, flowers only
+
+
+def test_the_order_facts_say_whether_the_jet_time_is_accepted():
+    ready(**{"delivery_type": "jet", "delivery_time": "15:00"})
+    assert "only REQUESTED" in core.order_facts(core.orders()[0])
+    at()["decide_order"].invoke({"order_id": 1, "confirm": True})
+    assert "ACCEPTED" in core.order_facts(core.orders()[0])
+
+
+def test_website_names_written_as_a_sentence_lose_the_final_full_stop():
+    assert core.display({"name": "x", "name_en": "Nine red roses in a Paşabahçe vase."}, "en") == "Nine red roses in a Paşabahçe vase"
+    assert core.display({"name": "x", "name_en": "Roses etc..."}, "en") == "Roses etc..."
+
+
+def test_new_option_photos_keep_the_short_options_line_even_when_it_repeats(monkeypatch):
+    monkeypatch.setenv("INTERPRET", "1")
+    monkeypatch.setattr(core, "product_jpeg", lambda p: b"\\xff\\xd8fake")
+    core.save(CUST, "assistant", "Here are the options 🌸 Which ones would you like?")  # the previous turn showed other options
+    ps = [p for p in core.graph()[0].values() if p.get("type") == "product" and p.get("category") == "roses"][:3]
+    look = AIMessage("", tool_calls=[{"name": "flowers_lookup", "args": {"query": "", "category": "roses", "color": "", "limit": 3}, "id": "a"}])
+    ph = AIMessage("", tool_calls=[{"name": "send_photos", "args": {"items": [{"product_id": p["id"], "title": p["name"]} for p in ps], "offer_options": True}, "id": "b"}])
+    monkeypatch.setattr(agent, "interpret_message", lambda p_, t_, st: {"language": "English"})
+    monkeypatch.setattr(agent, "LLM", fake(look, ph, "ok", "Of course! I'll find a few pretty pink bouquets 🌸"))  # the last text is what a rewrite would produce
+    assert agent.run_agent(CUST, "Ayse", "show me some pink ones") == "Here are the options 🌸 Which ones would you like?"
+
+
+def test_after_payment_repeated_details_are_no_change_and_a_yes_never_withdraws():
+    ready()
+    at()["decide_order"].invoke({"order_id": 1, "confirm": True})
+    at("confirm it")["confirm_payment_received"].invoke({"order_id": 1})
+    r = core.orders()[0]
+    t = {x.name: x for x in agent.make_tools(CUST, "Ayse", {"text": "add a chocolate box to the same delivery"})}
+    out = t["update_order"].invoke({"recipient_name": r["recipient_name"], "address": r["address"], "sender_phone": r["sender_phone"]})
+    assert out.startswith("NOTHING CHANGED") and not core.orders()[0]["change_request"]  # the same details again are no change request
+    t["request_change"].invoke({"cancel": True, "reason": "plans changed"})
+    st = {"text": "evet bu kadar", "photos": {}}
+    tl = agent.make_tools(CUST, "Ayse", st)
+    agent.apply_interpretation(CUST, st["text"], {"language": "Turkish", "answer": "yes"}, tl, st)
+    assert {x.name: x for x in tl}["withdraw_request"].invoke({}).startswith("NOT WITHDRAWN") and core.orders()[0]["change_request"]
+
+
+def test_a_question_about_the_delivery_time_is_not_the_opening_hours():
+    import fast
+    assert not fast.HOURS.search("teşekkürler, saat kaçta gelir?") and fast.HOURS.search("saat kaçta açılıyorsunuz?") and fast.HOURS.search("what are your opening hours")
+
+
+def test_adding_an_item_to_a_paid_order_never_drops_what_was_already_there():
+    ready()  # 2 x Teddy
+    at()["decide_order"].invoke({"order_id": 1, "confirm": True})
+    at("confirm it")["confirm_payment_received"].invoke({"order_id": 1})
+    choc = core.product(pid("Belgian Chocolate Box"))
+    tools(CUST)["request_change"].invoke({"order_id": 1, "items": [{"product_id": choc["id"], "quantity": 1}], "reason": "add a chocolate box"})
+    lines = {l[0]: l[1] for l in json.loads(core.orders()[0]["change_request"])["lines"]}
+    assert lines.get(core._nm(core.product(pid("Teddy"))["name"])) == 2 and lines.get(core._nm(choc["name"])) == 1, lines  # the teddies stay, the chocolate is added
+    tools(CUST)["request_change"].invoke({"order_id": 1, "items": [{"product_id": pid("Teddy"), "quantity": 0}, {"product_id": choc["id"], "quantity": 1}], "reason": "only the chocolate"})
+    lines = {l[0]: l[1] for l in json.loads(core.orders()[0]["change_request"])["lines"]}
+    assert list(lines) == [core._nm(choc["name"])], lines  # an explicit 0 removes
+
+
+def test_an_add_on_keeps_the_free_shared_delivery_and_the_given_sender_phone():
+    ready(**{"delivery_type": "jet", "delivery_time": "16:00", "sender_phone": "05331234567", "address": "Girne, Lemon street 5"})
+    at()["decide_order"].invoke({"order_id": 1, "confirm": True})
+    at("confirm it")["confirm_payment_received"].invoke({"order_id": 1})
+    choc = core.product(pid("Belgian Chocolate Box"))
+    t = {x.name: x for x in agent.make_tools(CUST, "Ayse", {"text": "aynı teslimata çikolata kutusu"})}
+    t["place_order"].invoke({"items": [{"product_id": choc["id"], "quantity": 1}], "ship_with_order_id": 1})
+    t["update_order"].invoke({"address": "Girne Lemon street 5", "sender_phone": "+" + CUST})  # the model repeats the address without the comma and pre-fills the chat number
+    o2 = core.orders()[1]
+    assert core.D(o2["delivery_fee"] or 0) == 0 and core.canon_phone(o2["sender_phone"]) == core.canon_phone("05331234567"), (o2["delivery_fee"], o2["sender_phone"])
+
+
+def test_naming_the_open_order_itself_as_its_shipment_still_saves_the_details():
+    draft_ready()
+    oid = int(core.open_order(CUST)["order_id"])
+    out = {x.name: x for x in agent.make_tools(CUST, "Ayse", {"text": "my name is Ayse"})}["update_order"].invoke({"sender_name": "Ayse", "ship_with_order_id": oid})
+    assert "NOT SAVED" not in out and core.open_order(CUST)["sender_name"] == "Ayse"
+
+
+def test_a_line_in_a_foreign_script_never_reaches_a_turkish_english_or_russian_customer():
+    core.kset("formlang:" + CUST, "tr")
+    agent.reply(CUST, "Ահա մի քանի գեղեցիկ ընտրություն 🌸\nİşte seçenekler:\n1. Gül Öpücüğü — 2,200 TL")
+    assert sent(CUST)[-1]["body"].startswith("İşte seçenekler") and "Ահա" not in sent(CUST)[-1]["body"]
+    core.kset("formlang:" + CUST, "ar")
+    agent.reply(CUST, "سلتك جاهزة 🌸")  # an Arabic customer keeps Arabic
+    assert sent(CUST)[-1]["body"] == "سلتك جاهزة 🌸"
+
+
+def test_a_refused_selection_after_payment_never_crashes_the_reply(monkeypatch):
+    ready()
+    at()["decide_order"].invoke({"order_id": 1, "confirm": True})
+    at("confirm it")["confirm_payment_received"].invoke({"order_id": 1})
+    ps = [p for p in core.graph()[0].values() if p.get("type") == "product"][:3]
+    items = [{"position": i, "id": p["id"], "name": p["name"], "category": p.get("category")} for i, p in enumerate(ps, 1)]
+    core.kset(f"shownlists:{CUST}", json.dumps([{"n": 1, "kind": "", "items": items}]))
+    call = AIMessage("", tool_calls=[{"name": "select_suggestions", "args": {"picks": [{"list": 1, "positions": [1], "quantity": 1}]}, "id": "s"}])
+    monkeypatch.setattr(agent, "interpret_message", lambda p_, t_, st: {"language": "Turkish", "named": [{"name": "çikolata kutusu", "quantity": 1}]})
+    monkeypatch.setattr(agent, "LLM", fake(call, "Aynı teslimata mı ekleyeyim, ayrı sipariş mi olsun? 🌸"))
+    assert agent.run_agent(CUST, "Ayse", "bir de aynı teslimata çikolata kutusu ekleyebilir misiniz?") == "Aynı teslimata mı ekleyeyim, ayrı sipariş mi olsun? 🌸"
+
+
+def test_the_kind_counted_is_the_customers_own_word_not_a_narrower_one():
+    daisies = [p for p in core.graph()[0].values() if p.get("type") == "product" and p.get("category") == "daisies"][:1]
+    roses = [p for p in core.graph()[0].values() if p.get("type") == "product" and p.get("category") == "roses"][:2]
+    flowers = roses[:1] + daisies + roses[1:]  # flower 1 rose, flower 2 daisy, flower 3 rose
+    items = [{"position": i, "id": p["id"], "name": p["name"], "category": p["category"]} for i, p in enumerate(flowers, 1)]
+    st = {"text": "3. çiçek olsun", "photos": {}, "lists": [{"n": 1, "items": items}], "suggestions": items}
+    {t.name: t for t in agent.make_tools(CUST, "Ayse", st)}["select_suggestions"].invoke({"picks": [{"list": 1, "kind": "daisies", "positions": [3]}]})  # the model narrowed "çiçek" to daisies
+    assert {core._nm(n) for n, _, _ in core.row_lines(core.open_order(CUST))} == {core._nm(roses[1]["name"])}  # the 3rd FLOWER
+
+
+def test_an_arabic_translation_with_arabic_digits_keeps_the_amounts_and_is_used(monkeypatch):
+    monkeypatch.setattr(agent, "LLM", fake("الإجمالي: ٤٬٣٠٠ TL 🌸"))
+    assert agent.translate_fixed("Total: 4,300 TL 🌸", "ar") == "الإجمالي: 4,300 TL 🌸"  # Arabic digits come back as the shop's own
+
+
+def test_the_fixed_bank_details_lines_reach_an_arabic_customer_translated(monkeypatch):
+    core.kset("formlang:" + CUST, "ar")
+    msg = "أكد الفريق طلبك 🌸\n• 1 x 15 Red Roses - 2,800 TL\nDelivery (Girne (Kyrenia), normal schedule, leaves at 13:00): free\nTOTAL TO PAY: 2,800 TL"
+    monkeypatch.setattr(agent, "LLM", fake("أكد الفريق طلبك 🌸\n• 1 x 15 Red Roses - 2,800 TL\nالتوصيل (Girne (Kyrenia)، الموعد العادي، ينطلق الساعة 13:00): مجاني\nالإجمالي المستحق: 2,800 TL"))
+    agent.reply(CUST, msg)
+    assert "TOTAL TO PAY" not in sent(CUST)[-1]["body"] and "2,800 TL" in sent(CUST)[-1]["body"]
+
+
+def test_a_translation_echoed_as_json_is_unwrapped_never_sent_as_json(monkeypatch):
+    monkeypatch.setattr(agent, "LLM", fake('{"language": "ar", "message": "الإجمالي المستحق: 5,150 TL"}'))
+    assert agent.translate_fixed("TOTAL TO PAY: 5,150 TL", "ar") == "الإجمالي المستحق: 5,150 TL"
+    monkeypatch.setattr(agent, "LLM", fake('{"language": "ar", "message": '))
+    assert agent.translate_fixed("TOTAL TO PAY: 5,151 TL", "ar") == "TOTAL TO PAY: 5,151 TL"  # broken: the original goes out
+
+
+def test_an_ordinal_without_a_kind_means_the_list_just_received():
+    a_, b_ = [p for p in core.graph()[0].values() if p.get("type") == "product" and p.get("available") is not False][:4], None
+    old = [{"position": i, "id": p["id"], "name": p["name"], "category": p.get("category")} for i, p in enumerate(a_[:2], 1)]
+    new = [{"position": i, "id": p["id"], "name": p["name"], "category": p.get("category")} for i, p in enumerate(a_[2:4], 1)]
+    st = {"text": "ikinci secenek olsun", "photos": {}, "lists": [{"n": 1, "items": old}, {"n": 2, "items": new}], "suggestions": new}
+    {t.name: t for t in agent.make_tools(CUST, "Ayse", st)}["select_suggestions"].invoke({"picks": [{"list": 1, "positions": [2]}]})  # the model reached back to the older list
+    assert {core._nm(n) for n, _, _ in core.row_lines(core.open_order(CUST))} == {core._nm(a_[3]["name"])}  # the 2nd of the LATEST list
+
+
+def test_re_choosing_the_item_already_in_the_basket_shows_the_basket_never_asks_to_add(monkeypatch):
+    ps = [p for p in core.graph()[0].values() if p.get("type") == "product" and p.get("available") is not False][:4]
+    l1 = [{"position": i, "id": p["id"], "name": p["name"], "category": p.get("category")} for i, p in enumerate(ps[:2], 1)]
+    l2 = [{"position": i, "id": p["id"], "name": p["name"], "category": p.get("category")} for i, p in enumerate(ps[2:4], 1)]
+    core.kset(f"shownlists:{CUST}", json.dumps([{"n": 1, "items": l1}, {"n": 2, "items": l2}]))
+    core.kset(f"suggestions:{CUST}", json.dumps(l2))
+    {t.name: t for t in agent.make_tools(CUST, "Ayse", {"text": "ıkıncı olsun", "lists": [{"n": 2, "items": l2}], "suggestions": l2})}["select_suggestions"].invoke({"positions": [2]})
+    core.save(CUST, "assistant", "Sepetiniz: ...")
+    call = AIMessage("", tool_calls=[{"name": "select_suggestions", "args": {"picks": [{"list": 2, "positions": [2], "quantity": 1}]}, "id": "s"}])
+    monkeypatch.setattr(agent, "interpret_message", lambda p_, t_, st: {"language": "Turkish"})  # the reader saw no new choice
+    monkeypatch.setattr(agent, "LLM", fake(call, "Tabii, ikinci seçeneği seçtiniz 🌸 Sepetinize ekleyeyim mi?"))
+    ans = agent.run_agent(CUST, "Ayse", "ikinci secenek olsun")
+    assert ans.startswith("Sepetiniz") and "ekleyeyim mi" not in ans and len(core.row_lines(core.open_order(CUST))) == 1
+
+
+def test_our_own_documents_old_and_new_names_are_never_taken_for_a_payment_proof():
+    import receipt
+    ready()
+    row = core.orders()[0]
+    for txt in ("INVOICE / FATURA\nNo. / No INV-00001", "RECEIPT / TAHSİLAT MAKBUZU\nRCT-00001", "QUOTATION / TEKLİF\nNo. / No Q-00001"):  # the last one: a PDF sent before the rename
+        assert receipt.check(txt + f"\nTotal {core.fmt_tl(row['payable'])}", row)["own"], txt
+
+
+def test_the_customers_same_delivery_answer_places_the_add_on_without_asking_again():
+    ready()
+    at()["decide_order"].invoke({"order_id": 1, "confirm": True})
+    at("confirm it")["confirm_payment_received"].invoke({"order_id": 1})
+    choc = core.product(pid("Belgian Chocolate Box"))
+    st = {"text": "bir de aynı teslimata Belgian Chocolate Box ekleyebilir misiniz?", "photos": {}}
+    tl = agent.make_tools(CUST, "Ayse", st)
+    agent.apply_interpretation(CUST, st["text"], {"language": "Turkish", "shipment": "same"}, tl, st)
+    out = {t.name: t for t in tl}["place_order"].invoke({"items": [{"product_id": choc["id"], "quantity": 1}]})  # the model forgot ship_with_order_id
+    assert "ADD-ON" in out and core.orders()[1]["address"] == core.orders()[0]["address"], out
+    other = "905000000654"
+    ready(other)
+    at()["decide_order"].invoke({"order_id": 3, "confirm": True})
+    st2 = {"text": "a Belgian Chocolate Box as a separate order please", "photos": {}}
+    tl2 = agent.make_tools(other, "Ali", st2)
+    agent.apply_interpretation(other, st2["text"], {"language": "English", "shipment": "separate"}, tl2, st2)
+    assert "NEW ORDER" in {t.name: t for t in tl2}["place_order"].invoke({"items": [{"product_id": choc["id"], "quantity": 1}]})
+
+
+def test_the_basket_question_is_recognised_with_names_shown_without_their_full_stop():
+    p = core.product(pid("Kırmızı Güller"))
+    p.update(name_en="The bouquet contains red roses.")
+    {t.name: t for t in agent.make_tools(CUST, "Ayse", {"text": "x"})}["place_order"].invoke({"items": [{"product_id": p["id"], "quantity": 1}]})
+    row = core.open_order(CUST)
+    last = agent.basket_confirmation_reply(row, 0)  # shows "The bouquet contains red roses" (no full stop)
+    st = {"text": "that's all", "photos": {}}
+    agent.make_tools(CUST, "Ayse", st)
+    assert st["basket_just_listed"](row, last)
+
+
+def test_the_same_or_separate_question_is_asked_once_never_in_a_loop():
+    ready()
+    at()["decide_order"].invoke({"order_id": 1, "confirm": True})
+    at("confirm it")["confirm_payment_received"].invoke({"order_id": 1})
+    choc = core.product(pid("Belgian Chocolate Box"))
+    first = {t.name: t for t in agent.make_tools(CUST, "Ayse", {"text": "can you add a Belgian Chocolate Box?"})}["place_order"].invoke({"items": [{"product_id": choc["id"], "quantity": 1}]})
+    assert first.startswith("NOT PLACED: ask whether") and len(core.orders()) == 1  # asked once
+    st = {"text": "evet", "photos": {}}
+    tl = agent.make_tools(CUST, "Ayse", st)
+    done = agent.apply_interpretation(CUST, "evet", {"language": "Turkish", "answer": "yes"}, tl, st)  # the reader could not tell which: "yes" to the question
+    assert any("ADD-ON" in str(r_) for _, _, r_ in done) and core.orders()[1]["address"] == core.orders()[0]["address"], done  # the waiting item is placed with the order, never asked again
+    {t.name: t for t in tl}["place_order"].invoke({"items": [{"product_id": choc["id"], "quantity": 1}]})  # the model adds it too
+    assert len(core.orders()) == 2 and len(core.row_lines(core.orders()[1])) == 1  # still once
+
+
+
+def test_a_product_named_in_the_message_beats_an_old_list_position():
+    ps = [p for p in core.graph()[0].values() if p.get("type") == "product" and p.get("available") is not False][:3]
+    choc = core.product(pid("Belgian Chocolate Box"))
+    items = [{"position": i, "id": p["id"], "name": p["name"]} for i, p in enumerate(ps, 1) if p["id"] != choc["id"]]
+    st = {"text": "Belgian Chocolate Box da ekleyin", "photos": {}, "lists": [{"n": 1, "items": items}], "suggestions": items}
+    out = {t.name: t for t in agent.make_tools(CUST, "Ayse", st)}["select_suggestions"].invoke({"picks": [{"list": 1, "positions": [1]}]})
+    assert out.startswith("NOT PLACED: the customer NAMED") and choc["id"] in out and not core.open_order(CUST)
+
+
+def test_a_request_for_a_kind_of_product_always_gets_a_list(monkeypatch):
+    monkeypatch.setattr(core, "product_jpeg", lambda p: b"\xff\xd8fake")
+    flowers = [p for p in core.graph()[0].values() if p.get("type") == "product" and p.get("category") in ("roses", "daisies", "lilies", "orchids") and p.get("available") is not False]
+    monkeypatch.setattr(agent, "interpret_message", lambda p_, t_, st: {"language": "Turkish", "browse": "flower"})
+    monkeypatch.setattr(agent, "LLM", fake(f"Elbette 🌸 {flowers[0]['name']} ister misiniz?"))  # the model offers ONE item
+    ans = agent.run_agent(CUST, "Ayse", "bir de çiçek ekleyebilir misiniz?")
+    shown = json.loads(core.kget(f"suggestions:{CUST}") or "[]")
+    assert len(shown) >= 4 and all(core.product(x["id"])["category"] in ("roses", "daisies", "lilies", "orchids", "plants", "wreaths", "other") for x in shown), shown
+    assert "1." in ans and "2." in ans and not core.open_order(CUST)  # a numbered list, nothing added
+
+
+def test_a_question_about_adding_never_sends_the_team_a_change_with_a_guessed_item():
+    ready()
+    at()["decide_order"].invoke({"order_id": 1, "confirm": True})
+    at("confirm it")["confirm_payment_received"].invoke({"order_id": 1})
+    choc = core.product(pid("Belgian Chocolate Box"))
+    st = {"text": "bir de çikolata ekleyebilir misiniz?", "photos": {}}
+    tl = agent.make_tools(CUST, "Ayse", st)
+    agent.apply_interpretation(CUST, st["text"], {"language": "Turkish", "browse": "chocolate"}, tl, st)
+    out = {t.name: t for t in tl}["request_change"].invoke({"order_id": 1, "items": [{"product_id": choc["id"], "quantity": 1}], "reason": "wants chocolate"})
+    assert out.startswith("NOT SENT: the customer has not chosen") and not core.orders()[0]["change_request"]
+    st = {"text": "Belgian Chocolate Box da ekleyin", "photos": {}}  # named: the change goes to the team
+    tl = agent.make_tools(CUST, "Ayse", st)
+    agent.apply_interpretation(CUST, st["text"], {"language": "Turkish"}, tl, st)
+    {t.name: t for t in tl}["request_change"].invoke({"order_id": 1, "items": [{"product_id": choc["id"], "quantity": 1}], "reason": "add"})
+    assert core.orders()[0]["change_request"]
+
+
+def test_the_basket_question_is_recognised_with_a_turkish_style_total():
+    {t.name: t for t in agent.make_tools(CUST, "Ayse", {"text": "x"})}["place_order"].invoke({"items": [{"product_id": pid("Teddy"), "quantity": 2}]})
+    row = core.open_order(CUST)
+    p = core.product(pid("Teddy"))
+    total = core.fmt_tl(row["total"]).replace(",", ".")  # "1.800 TL" as the model writes it in Turkish
+    st = {"text": "evet doğru", "photos": {}}
+    agent.make_tools(CUST, "Ayse", st)
+    assert st["basket_just_listed"](row, f"Sepetinize 2 × {p['name']} ekledim: {total}. Sepetiniz tamam mı?")
+
+
+@pytest.mark.parametrize("reason", ["we are closed tomorrow for holiday", "red roses are unavailable"])
+def test_cancellation_notifies_without_sales_tools(monkeypatch, reason):
+    ready()
+    core.save(CUST, "user", "hi, I need flowers please")
+    core.kset("adminlang:" + ADMIN, "tr")
+    core.kset("askf:" + CUST, json.dumps({"oid": 1, "field": "date"}))
+    core.kset("early:" + CUST, json.dumps({"delivery_date": "tomorrow"}))
+    monkeypatch.setattr(agent, "run_agent", lambda *a, **k: pytest.fail("cancellation cannot run sales tools"))
+    prompts = []
+    class Notice:
+        def invoke(self, messages):
+            prompts.append(messages[0].content)
+            return AIMessage("Reason: " + reason + ".")
+    monkeypatch.setattr(agent, "get_llm", lambda: Notice())
+    agent.decide(ADMIN, False, 1, reason)
+    assert core.order_row(1)["status"] == "rejected"
+    assert reason in sent(CUST)[-1]["body"]
+    assert "into English" in prompts[0] and "Do not add products" in prompts[0]
+    assert ("Would you like suggestions" in sent(CUST)[-1]["body"]) == ("unavailable" in reason)
+    assert not core.kget("askf:" + CUST) and not core.kget("early:" + CUST)
+    assert not core.open_order(CUST)
+    agent.decide(ADMIN, True, 1, "")
+    assert core.order_row(1)["status"] == "rejected"
+
+
+def test_forwarded_owner_message_uses_customer_language(monkeypatch):
+    core.save(CUST, "user", "hello, I need flowers please")
+    core.kset("adminlang:" + ADMIN, "tr")
+    prompts = []
+    class Translator:
+        def invoke(self, messages):
+            prompts.append(messages)
+            return AIMessage("We are closed tomorrow for the holiday.")
+    monkeypatch.setattr(agent, "get_llm", lambda: Translator())
+    result = at("tell him we are closed tomorrow", {"phone": CUST})["message_customer"].invoke(
+        {"customer_number": CUST, "message": "Yarın bayram nedeniyle kapalıyız."})
+    assert "Sent to" in result
+    assert sent(CUST)[-1]["body"] == "We are closed tomorrow for the holiday."
+    assert "into English" in prompts[0][0].content
+
+
+def test_new_order_after_cancellation_reuses_contacts_and_allows_changes():
+    ready()
+    original = dict(core.order_row(1))
+    agent.decide(ADMIN, False, 1, "closed tomorrow for holiday")
+    result = tools()["place_order"].invoke({"items": [{"product_id": pid("Teddy"), "quantity": 1}]})
+    new = core.open_order(CUST)
+    assert new and new["order_id"] != original["order_id"], result
+    assert new["sender_name"] == original["sender_name"]
+    assert not new["delivery_date"]
+    assert any(p["name"] == original["recipient_name"] for p in core.people(CUST))
+    tools()["update_order"].invoke({"recipient_name": "New Person", "recipient_phone": "+905331234567", "address": "Girne, New Street 42", "note": "hello"})
+    assert core.open_order(CUST)["recipient_name"] == "New Person"
+    assert core.order_row(1)["status"] == "rejected"
+    assert core.order_row(1)["recipient_name"] == original["recipient_name"]
+
+
+def test_forwarded_question_is_translated_before_saving_pending_prompt(monkeypatch):
+    ready()
+    core.save(CUST, "user", "hello I need flowers please")
+    core.kset("adminlang:" + ADMIN, "tr")
+    agent.LLM = fake("Would you like suggestions instead?")
+    at("ask the customer if they want suggestions")["ask_customer"].invoke({
+        "order_id": 1, "field": "alternative", "message": "Başka öneri ister misiniz?"})
+    assert sent(CUST)[-1]["body"] == "Would you like suggestions instead?"
+    assert core.jget("askf:" + CUST)["oid"] == 1
+
+
+def test_failed_forward_translation_does_not_send_admin_language(monkeypatch):
+    core.save(CUST, "user", "hello I need flowers please")
+    monkeypatch.setattr(agent, "get_llm", lambda: (_ for _ in ()).throw(RuntimeError("translator down")))
+    with pytest.raises(RuntimeError, match="translator down"):
+        at("tell him we are closed")["message_customer"].invoke({
+            "customer_number": CUST, "message": "Yarın kapalıyız."})
+    assert not sent(CUST)
+
+
+def test_cancellation_translation_failure_uses_local_notice_and_alerts_owner(monkeypatch):
+    ready()
+    core.save(CUST, "user", "hello I need flowers please")
+    monkeypatch.setattr(agent, "get_llm", lambda: (_ for _ in ()).throw(RuntimeError("translator down")))
+    agent.decide(ADMIN, False, 1, "Yarın bayram nedeniyle kapalıyız")
+    assert sent(CUST)[-1]["body"] == "Your order #1 has been cancelled."
+    assert "reason could not be translated" in sent(ADMIN)[-1]["body"]
+    assert core.order_row(1)["status"] == "rejected"
+
+
+@pytest.mark.parametrize("action,storage,args", [
+    ("place_order", "order_create", None),
+    ("update_order", "order_form_update", {"recipient_name": "Elif"}),
+    ("update_order", "order_form_update", {"delivery_type": "normal"}),
+])
+def test_failed_customer_save_alerts_owner_immediately(monkeypatch, action, storage, args):
+    if action != "place_order":
+        ready()
+    args = args or {"items": [{"product_id": pid("Teddy"), "quantity": 1}]}
+    def fail(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(core, storage, fail)
+    st = {"text": "please save these details", "photos": {}}
+    t = {t.name: t for t in agent.make_tools(CUST, "Ayse", st)}
+    agent.AFTER[CUST] = ["stale form question"]
+    with pytest.raises(agent.CustomerSaveError):
+        t[action].invoke(args)
+    notices = [e["body"] for e in sent(ADMIN) if "SAVING FAILED" in e["body"]]
+    assert len(notices) == 1 and action in notices[0] and "disk full" in notices[0]
+    assert "please save these details" in notices[0]
+    assert CUST not in agent.AFTER
+    assert core.q("SELECT 1 FROM paused WHERE phone=?", CUST)
+    with pytest.raises(agent.CustomerSaveError):
+        t[action].invoke(args)
+    assert len([e for e in sent(ADMIN) if "SAVING FAILED" in e["body"]]) == 1
+
+
+def test_save_failure_stops_model_loop_without_reasking_customer(monkeypatch):
+    ready()
+    agent.LLM = fake(AIMessage("", tool_calls=[{"name": "update_order", "args": {"recipient_name": "Elif"}, "id": "failed_save"}]),
+                     "Please send the recipient name again")
+    def fail(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(core, "order_form_update", fail)
+    reply = agent.run_agent(CUST, "Ayse", "please help with my request")
+    assert "don't need to send the information again" in reply
+    assert agent.LLM.calls == 1
+    assert any("SAVING FAILED" in e["body"] for e in sent(ADMIN))
+
+
+def test_followup_after_save_failure_waits_for_admin_instead_of_reasking(monkeypatch):
+    ready()
+    def fail(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(core, "order_form_update", fail)
+    with pytest.raises(agent.CustomerSaveError):
+        tools()["update_order"].invoke({"delivery_type": "normal"})
+    before = len(sent(CUST))
+    run(msg(text="normal delivery please"))
+    assert agent.LLM.calls == 0
+    assert any(role == "user" and text == "normal delivery please" for role, text in core.history(CUST))
+    assert len(sent(CUST)) == before
+
+
+def test_admin_reverses_rejection_on_focused_order_without_touching_other_customer():
+    other = "905330009999"
+    ready(CUST)
+    ready(other)
+    at("dont confirm it", {"oid": 2, "phone": other})["decide_order"].invoke({"order_id": 1, "confirm": False})
+    assert core.order_row(2)["status"] == "rejected"
+    assert core.order_row(1)["status"] == "pending"
+    count = len(sent(CUST))
+    result = at("nevermind, confirm it", {"oid": 2, "phone": other})["decide_order"].invoke({"order_id": 1, "confirm": True})
+    assert core.order_row(2)["status"] == "awaiting_payment", result
+    assert core.order_row(1)["status"] == "pending"
+    assert len(sent(CUST)) == count
+    assert any("TOTAL TO PAY" in e["body"] and "#2" in e["body"] for e in sent(other))
+    assert "Order 2: confirmed" in result
+    at("no, reject it", {"oid": 2, "phone": other})["decide_order"].invoke({"order_id": 1, "confirm": False, "reason": "closed"})
+    assert core.order_row(2)["status"] == "rejected"
+    assert core.order_row(1)["status"] == "pending"
+
+
+def test_explicit_rejected_order_never_falls_back_to_another_order():
+    ready(CUST)
+    ready("905330009999")
+    agent.decide(ADMIN, False, 2, "closed")
+    result = at("confirm order 2", {"oid": 1, "phone": CUST})["decide_order"].invoke({"order_id": 1, "confirm": True})
+    assert core.order_row(2)["status"] == "awaiting_payment", result
+    assert core.order_row(1)["status"] == "pending"
+
+
+@pytest.mark.parametrize("answer,kind,time", [("1, tomorrow", "normal", ""), ("1, yarın", "normal", ""), ("2, tomorrow 15:00", "jet", "15:00"), ("3, tomorrow 15:00", "pickup", "15:00")])
+def test_numbered_delivery_reply_never_selects_old_products(monkeypatch, answer, kind, time):
+    from datetime import timedelta
+    ready_for_confirmation()
+    row = core.order_update(1, core.OPEN, delivery_type="", delivery_date="", delivery_time="")
+    core.kset("dopts:1", row["delivery_area"])
+    p = core.product(pid("Purple Orchid"))
+    core.kset("suggestions:" + CUST, json.dumps([{"position": 1, "id": p["id"], "name": p["name"]}]))
+    core.kset("shownlists:" + CUST, json.dumps([{"n": 1, "items": [{"position": 1, "id": p["id"], "name": p["name"]}]}]))
+    core.save(CUST, "assistant", core.delivery_options(row, "en"))
+    before = row["items"], row["quantities"]
+    monkeypatch.setattr(agent, "interpret_message", lambda *a: pytest.fail("delivery selection must bypass old product interpretation"))
+    result = agent.run_agent(CUST, "Ayse", answer)
+    row = core.order_row(1)
+    assert (row["items"], row["quantities"]) == before
+    assert row["delivery_type"] == kind and row["delivery_time"] == time, result
+    assert row["delivery_date"] == (core.now().date() + timedelta(days=1)).isoformat()
+    assert core.kget("detailcheck:1") == agent.submitted_signature(row)
+    assert len(core.orders()) == 1
+
+
+@pytest.mark.parametrize("text,model_confirm,expected", [("dont confirm it", True, "rejected"), ("confirm it", False, "awaiting_payment")])
+def test_admin_decision_follows_owner_even_when_model_boolean_is_wrong(text, model_confirm, expected):
+    ready()
+    result = at(text, {"oid": 1, "phone": CUST})["decide_order"].invoke({"order_id": 1, "confirm": model_confirm})
+    assert core.order_row(1)["status"] == expected, result
+    assert sent(CUST)
+
+
+def test_admin_can_withdraw_confirmation_and_customer_is_notified():
+    ready()
+    at("confirm order 1")["decide_order"].invoke({"order_id": 1, "confirm": True})
+    result = at("undo the confirmation of order 1")["edit_order_field"].invoke({"order_id": 1, "field": "status", "value": "pending"})
+    assert core.order_row(1)["status"] == "pending", result
+    assert "withdrawn the confirmation of order #1" in sent(CUST)[-1]["body"]
+
+
+@pytest.mark.parametrize("target", ["#2", "+905330009999", "905330009999", "+90 533 000 99 99"])
+def test_slash_confirm_reject_and_reopen_by_id_or_customer_phone(monkeypatch, target):
+    other = "905330009999"
+    ready(CUST)
+    ready(other)
+    monkeypatch.setattr(agent, "admin_chat", lambda *a: pytest.fail("slash decisions must bypass admin chat"))
+    monkeypatch.setattr(agent, "owner_intent", lambda *a: pytest.fail("slash decisions must not need intent classification"))
+    count = len(sent(CUST))
+    agent.admin_entry(ADMIN, f"/confirm {target}")
+    assert core.order_row(2)["status"] == "awaiting_payment"
+    assert core.order_row(1)["status"] == "pending"
+    assert "Order 2: confirmed" in sent(ADMIN)[-1]["body"]
+    agent.LLM = fake("Your order #2 has been cancelled because we are closed tomorrow.")
+    agent.admin_entry(ADMIN, f"/reject {target} we are closed tomorrow")
+    assert core.order_row(2)["status"] == "rejected"
+    assert "closed tomorrow" in sent(other)[-1]["body"]
+    agent.admin_entry(ADMIN, f"/confirm {target}")
+    assert core.order_row(2)["status"] == "awaiting_payment"
+    assert core.order_row(1)["status"] == "pending"
+    assert "Order 2: confirmed" in sent(ADMIN)[-1]["body"]
+    assert any("TOTAL TO PAY" in e["body"] for e in sent(other))
+    assert len(sent(CUST)) == count
+
+
+def test_slash_confirm_phone_targets_latest_order_even_if_rejected():
+    ready()
+    core.order_update(1, core.OPEN, status="awaiting_payment")
+    ready(CUST)
+    agent.decide(ADMIN, False, 2, "closed")
+    agent.admin_entry(ADMIN, "/confirm " + CUST)
+    assert core.order_row(2)["status"] == "awaiting_payment"
+    assert core.order_row(1)["status"] == "awaiting_payment"
+    assert "Order 2: confirmed" in sent(ADMIN)[-1]["body"]
+
+
+def test_slash_confirm_already_confirmed_resends_notice_without_recording_payment():
+    ready()
+    agent.admin_entry(ADMIN, "/confirm #1")
+    count = len(sent(CUST))
+    agent.admin_entry(ADMIN, "/confirm #1")
+    assert len(sent(CUST)) > count
+    assert core.order_row(1)["status"] == "awaiting_payment" and not core.order_row(1)["paid"]
+    assert "resent to the customer" in sent(ADMIN)[-1]["body"]
+    core.order_update(1, ("awaiting_payment",), status="confirmed", paid=core.order_row(1)["payable"])
+    agent.admin_entry(ADMIN, "/reject #1")
+    assert core.order_row(1)["status"] == "rejected"
+
+
+@pytest.mark.parametrize("command", ["/confirm", "/reject", "/confirm #999", "/reject +905331119999"])
+def test_invalid_slash_decision_never_changes_another_order(command):
+    ready()
+    before = len(sent(CUST))
+    agent.admin_entry(ADMIN, command)
+    assert core.order_row(1)["status"] == "pending"
+    assert len(sent(CUST)) == before
+    assert sent(ADMIN)
+
+
+@pytest.mark.parametrize("form", [
+    "Your name: Ava Test\nYour phone: +905550000101\nRecipient name: Ava Test\nRecipient phone: +905550000101\nCity: Lefkosa\nAddress: Lefkosa, Test Street, No 42, apartment 7, opposite the cafe",
+    "Gönderen adı: Deniz Test\nGönderen telefonu: +905550000102\nAlıcı adı: Deniz Test\nAlıcı telefonu: +905550000102\nŞehir: Lefkoşa\nAdres: Lefkoşa, Deneme Sokak, No 24, Daire 3, kafenin karşısı",
+])
+def test_completed_order_form_is_not_split_into_shop_contact_questions(form):
+    import fast
+    assert fast.answer(CUST, form) is None
+    assert fast.split_head(CUST, form) == ([], "", form)
+
+
+def test_turkish_product_url_does_not_change_english_customer_language():
+    text = "I want 1 x 5 White Roses https://kibrisciceksepetim.com/tr/products/5-beyaz-gul . Card message: love u baby. That is all."
+    assert agent.lang_of(CUST, text) == 0
+    assert agent.reply_lang(CUST, text) == "English"
+
+
+def test_natural_explicit_reversal_executes_without_another_admin_question(monkeypatch):
+    ready()
+    agent.decide(ADMIN, False, 1, "closed")
+    core.remember_focus(1, CUST)
+    monkeypatch.setattr(agent, "admin_chat", lambda *a: pytest.fail("explicit reopening must execute without another question"))
+    agent.admin_entry(ADMIN, "nevermind, confirm it")
+    assert core.order_row(1)["status"] == "awaiting_payment"
+    assert "Order 1: confirmed" in sent(ADMIN)[-1]["body"]
+
+
+def test_slash_reject_cancels_whole_order_even_with_pending_customer_change():
+    ready()
+    agent.admin_entry(ADMIN, "/confirm #1")
+    core.request_change(1, CUST, {"kind": "change", "note": "new card"})
+    agent.admin_entry(ADMIN, "/reject #1")
+    assert core.order_row(1)["status"] == "rejected"
+    assert not core.order_row(1)["change_request"]
+
+
+@pytest.mark.parametrize("command", ["/reject #1 --mute", "confirm order 1 but don't inform the customer", "reject order 1 without notifying the customer"])
+def test_silent_order_actions_are_not_supported(command):
+    ready()
+    count = len(sent(CUST))
+    agent.admin_entry(ADMIN, command)
+    assert core.order_row(1)["status"] == "pending"
+    assert len(sent(CUST)) == count
+    assert "always notify" in sent(ADMIN)[-1]["body"]
+
+
+@pytest.mark.parametrize("text", ["Use the same address as my previous order", "Önceki siparişimdeki aynı adrese"])
+def test_new_order_reuses_cancelled_address_without_overwriting_new_recipient(text):
+    ready()
+    original = dict(core.order_row(1))
+    agent.decide(ADMIN, False, 1, "closed")
+    t = {t.name:t for t in agent.make_tools(CUST, "Ayse", {"text":text})}
+    result = t["place_order"].invoke({"items":[{"product_id":pid("Purple Orchid"),"quantity":1}], "recipient_name":"New Person", "recipient_phone":"+905331234567"})
+    row = core.open_order(CUST)
+    assert row and row["order_id"] != "1", result
+    assert row["address"] == original["address"]
+    assert row["recipient_name"] == "New Person"
+    assert core.order_row(1)["status"] == "rejected"
+
+
+def test_maintenance_queues_receipts_and_media_before_any_processing(monkeypatch):
+    ready()
+    core.order_update(1, core.OPEN, status="awaiting_payment")
+    monkeypatch.setattr(agent, "image_route", lambda *a: pytest.fail("no image processing during update"))
+    monkeypatch.setattr(agent, "payment_proof", lambda *a: pytest.fail("receipt must wait until restart"))
+    core.kset("maintenance", "1")
+    core.kset("down_notice", "0")
+    agent.DOWN_NOTIFIED.clear()
+    count = len(sent(CUST))
+    run(msg(text="please see my payment"), msg("image", data=JPG, mime="image/jpeg", text="my receipt"),
+        msg("audio", data=b"voice bytes", mime="audio/ogg", duration=3),
+        msg("document", data=b"pdf bytes", mime="application/pdf", filename="receipt.pdf", text="PDF receipt"))
+    queued = core.inbox()
+    assert len(queued) == 4 and len(sent(CUST)) == count + 1
+    assert [core.inbox_load(x).get("data") for x in queued] == [None, JPG, b"voice bytes", b"pdf bytes"]
+    assert queued[1]["text"] == "my receipt" and queued[3]["text"] == "PDF receipt"
+    assert core.order_row(1)["status"] == "awaiting_payment"
+    asyncio.run(agent.process_inbox())
+    assert len(core.inbox()) == 4 and agent.LLM.calls == 0
+
+
+def test_batch_waiting_when_maintenance_starts_keeps_single_journal_entry():
+    item = msg(text="please deliver tomorrow")
+    item["jid"] = core.inbox_add(item)
+    core.INFLIGHT.add(item["jid"])
+    core.kset("maintenance", "1")
+    asyncio.run(agent.process_batch(CUST, [item]))
+    assert len(core.inbox()) == 1 and core.inbox()[0]["jid"] == item["jid"]
+    assert core.inbox()[0]["stored"] and item["jid"] not in core.INFLIGHT
+    assert agent.LLM.calls == 0
+
+
+def test_maintenance_keeps_burst_messages_instead_of_dropping_them():
+    agent.DOWN_NOTIFIED.clear()
+    core.kset("maintenance", "1")
+    run(*(msg(text=f"delivery detail {i}") for i in range(15)))
+    assert len(core.inbox()) == 15 and len(sent(CUST)) == 1
+    assert agent.LLM.calls == 0
+
+
+def test_queued_receipt_is_processed_only_after_restart_and_keeps_caption(monkeypatch):
+    ready()
+    core.order_update(1, core.OPEN, status="awaiting_payment")
+    core.kset("maintenance", "1")
+    run(msg("document", data=b"pdf receipt", mime="application/pdf", filename="receipt.pdf", text="paid for order 1"))
+    seen = []
+    monkeypatch.setattr(agent, "payment_proof", lambda phone,item,row: seen.append((phone,item,row)))
+    core.CHAT.clear(); core.INFLIGHT.clear(); agent.DOWN_NOTIFIED.clear()
+    core.kset("maintenance", "0")
+    asyncio.run(agent.process_inbox())
+    assert len(seen) == 1 and seen[0][1]["data"] == b"pdf receipt" and seen[0][1]["text"] == "paid for order 1"
+    assert seen[0][2]["order_id"] == "1" and not core.inbox()
+
+
+def test_failed_receipt_replay_retains_durable_message(monkeypatch):
+    core.kset("seen:" + ADMIN, time.time())
+    core.inbox_add({"sender": CUST, "kind": "document", "data": b"receipt", "filename": "receipt.pdf"})
+    def failed(*a):
+        raise RuntimeError("temporary channel failure")
+    monkeypatch.setattr(agent, "payment_proof", failed)
+    asyncio.run(agent.process_inbox())
+    assert len(core.inbox()) == 1 and core.inbox()[0]["jid"] not in core.INFLIGHT
+    assert core.inbox_load(core.inbox()[0])["data"] == b"receipt"
+    assert any("still saved" in x["body"] for x in sent(ADMIN))
+
+
+@pytest.mark.parametrize("step_result", [0, 1, None])
+def test_full_update_defers_backlog_until_restart_only_on_success(monkeypatch, tmp_path, step_result):
+    import refresh_catalog as rc
+    root = tmp_path / "refresh_root"; root.mkdir()
+    monkeypatch.setattr(rc, "ROOT", root)
+    monkeypatch.setattr(rc, "BACKED", ())
+    monkeypatch.setattr(rc, "STEPS", [("download photos", [])])
+    monkeypatch.setattr(rc, "names", lambda: {})
+    monkeypatch.setattr(rc, "_step", lambda *a, **kw: (step_result, "failure"))
+    monkeypatch.setattr(rc, "refresh_prices", lambda: (1,1))
+    monkeypatch.setattr(rc, "finish_stopped", lambda *a: "Stopped")
+    events = []
+    rc.run(lambda: events.append("resume"), restart=lambda: events.append("restart"))
+    assert events == (["restart"] if step_result == 0 else ["resume"])
+    assert core.kget("maintenance") == ("1" if step_result == 0 else "0")
+    assert core.kget("refresh_restart") == ("ready" if step_result == 0 else "")
+
+
+def test_successful_refresh_restart_resumes_queue_without_interruption_warning(monkeypatch):
+    import app as web
+    core.kset("seen:" + ADMIN, time.time())
+    core.inbox_add({"sender": CUST, "kind": "text", "text": "hello"})
+    core.kset("maintenance", "1"); core.kset("refresh_restart", "ready")
+    flushed = []
+    monkeypatch.setattr(agent, "flush_inbox", lambda *a: flushed.append(True))
+    web.resume_pending_messages()
+    assert flushed == [True] and core.kget("maintenance") == "0" and not core.kget("refresh_restart")
+    assert "queued customer messages are resuming" in sent(ADMIN)[-1]["body"]
+    assert "interrupted" not in sent(ADMIN)[-1]["body"]
+
+
+def test_graceful_restart_reuses_original_python_invocation(monkeypatch):
+    import app as web
+    core.kset("refresh_restart", "ready")
+    executed = []
+    monkeypatch.setattr(web.os, "execv", lambda executable,args: executed.append((executable,args)))
+    monkeypatch.setattr(web.sys, "orig_argv", ["python", "-m", "uvicorn", "app:app", "--port", "8000"])
+    web.restart_after_refresh()
+    assert executed == [(web.sys.executable,[web.sys.executable,"-m","uvicorn","app:app","--port","8000"])]
+    core.kset("refresh_restart", "")
+    web.restart_after_refresh()
+    assert len(executed) == 1
+
+
+def test_failed_restart_resumes_old_server_and_preserves_queued_messages(monkeypatch, tmp_path):
+    import refresh_catalog as rc
+    root=tmp_path/"refresh_root";root.mkdir()
+    monkeypatch.setattr(rc,"ROOT",root);monkeypatch.setattr(rc,"BACKED",());monkeypatch.setattr(rc,"STEPS",[])
+    monkeypatch.setattr(rc,"names",lambda:{});monkeypatch.setattr(rc,"refresh_prices",lambda:(1,1))
+    core.inbox_add({"sender":CUST,"kind":"text","text":"please keep this"})
+    core.kset("seen:"+ADMIN,time.time())
+    resumed=[]
+    def fail():raise OSError("restart unavailable")
+    rc.run(lambda:resumed.append(True),restart=fail)
+    assert resumed==[True] and core.kget("maintenance")=="0" and not core.kget("refresh_restart")
+    assert len(core.inbox())==1 and "restart failed" in sent(ADMIN)[-1]["body"]
+
+
+def test_failed_replay_and_failed_error_notice_do_not_delete_message(monkeypatch):
+    item=msg(text="please keep my order details")
+    item["jid"]=core.inbox_add(item);core.INFLIGHT.add(item["jid"])
+    def fail(*a):raise OSError("channel unavailable")
+    monkeypatch.setattr(agent,"_batch",fail);monkeypatch.setattr(agent,"say",fail)
+    with pytest.raises(OSError):asyncio.run(agent.process_batch(CUST,[item]))
+    assert len(core.inbox())==1 and core.inbox()[0]["text"]==item["text"]
+    assert item["jid"] not in core.INFLIGHT
+
+
+def test_main_server_stops_simulation_before_restarting(monkeypatch):
+    import app as web
+    calls=[]
+    monkeypatch.setattr(web.dashboard,"_sb_stop",lambda:calls.append("stop simulation"))
+    monkeypatch.setattr(web.os,"execv",lambda *a:calls.append("restart main"))
+    core.kset("refresh_restart","ready")
+    web.restart_after_refresh()
+    assert calls==["stop simulation","restart main"]
+    calls.clear();core.kset("refresh_restart","")
+    web.restart_after_refresh()
+    assert calls==["stop simulation"]
+
+
+def test_simulation_reconnects_after_parent_restart_without_starting_another_process(monkeypatch):
+    import dashboard
+    monkeypatch.setitem(dashboard.SB,"proc",None);monkeypatch.setitem(dashboard.SB,"pid",None)
+    monkeypatch.setattr(dashboard,"_sb_up",lambda:True)
+    alive={"value":True}
+    def attach():dashboard.SB["pid"]=4321;return True
+    monkeypatch.setattr(dashboard,"_sb_attach",attach)
+    monkeypatch.setattr(dashboard,"_sb_pid_matches",lambda pid:pid==4321 and alive["value"])
+    monkeypatch.setattr(dashboard,"_sb_spawn",lambda:pytest.fail("existing sandbox must not be restarted"))
+    client=dash_client();dash_login(client)
+    assert client.post('/api/dash/sandbox/start',json={},headers=H).json()=={"running":True}
+    assert client.get('/api/dash/sandbox/status').json()=={"running":True,"starting":False}
+    async def forward(*a,**kw):return agent.SimpleNamespace(content=b'<html>simulation</html>',status_code=200,headers={'content-type':'text/html'})
+    monkeypatch.setattr(dashboard,'_forward',forward)
+    assert client.get('/sandbox/embed/sim').status_code==200
+    signals=[]
+    def stop(pid,sig):signals.append((pid,sig));alive['value']=False
+    monkeypatch.setattr(dashboard.os,'kill',stop)
+    assert client.post('/api/dash/sandbox/stop',json={},headers=H).json()=={'running':False}
+    assert signals==[(4321,dashboard.signal.SIGTERM)] and dashboard.SB['pid'] is None
+
+
+def test_simulation_refuses_to_attach_unrelated_service_on_port_8001(monkeypatch):
+    import dashboard
+    monkeypatch.setitem(dashboard.SB,'proc',None);monkeypatch.setitem(dashboard.SB,'pid',None)
+    monkeypatch.setattr(dashboard,'_sb_up',lambda:True)
+    monkeypatch.setattr(dashboard,'_sb_attach',lambda:False)
+    monkeypatch.setattr(dashboard,'_sb_spawn',lambda:pytest.fail('port is occupied'))
+    client=dash_client();dash_login(client)
+    assert client.post('/api/dash/sandbox/start',json={},headers=H).status_code==409
+    assert client.get('/sandbox/embed/sim').status_code==503
+
+
+@pytest.mark.parametrize('mismatch',['none','state','channel','port','project','zombie'])
+def test_simulation_process_identity_requires_isolated_state_and_disabled_channels(monkeypatch,tmp_path,mismatch):
+    import dashboard
+    from pathlib import Path as RealPath
+    procroot=tmp_path/'proc';process=procroot/'4321';process.mkdir(parents=True)
+    sbdir=tmp_path/'sandbox';sbdir.mkdir()
+    env={'STATE_DIR':str(sbdir),'WAHA_API_KEY':'','WHATSAPP_TOKEN':'','PHONE_NUMBER_ID':'','TELEGRAM_TOKEN':''}
+    if mismatch=='state':env['STATE_DIR']=str(core.ROOT)
+    if mismatch=='channel':env['WAHA_API_KEY']='test-live-key'
+    port=str(dashboard.SB_PORT) if mismatch!='port' else '8000'
+    (process/'cmdline').write_bytes(('python\0-m\0uvicorn\0app:app\0--port\0'+port+'\0').encode())
+    (process/'environ').write_bytes(('\0'.join(k+'='+v for k,v in env.items())+'\0').encode())
+    (process/'status').write_text('Name:\tpython\nState:\t'+('Z (zombie)' if mismatch=='zombie' else 'S (sleeping)'))
+    (process/'cwd').symlink_to(core.ROOT if mismatch!='project' else tmp_path,target_is_directory=True)
+    monkeypatch.setattr(dashboard,'SB_DIR',sbdir)
+    monkeypatch.setattr(dashboard,'Path',lambda value:procroot if str(value)=='/proc' else RealPath(value))
+    assert dashboard._sb_pid_matches(4321)==(mismatch=='none')
+
+
+
+def test_price_by_quantity_and_delivery_by_area_are_answered_by_code_without_the_model(monkeypatch):
+    import fast
+    cat = {"a": {"id": "a", "name": "Seni Seviyorum 5'li Kırmızı Gül Buketi", "name_en": "I Love You 5-Piece Red Rose Bouquet", "colors": ["red"], "url": "u"},
+           "b": {"id": "b", "name": "15 Kırmızı Gül", "name_en": "15 Red Roses", "colors": ["red"]},
+           "c": {"id": "c", "name": "5 Beyaz Gül", "name_en": "5 White Roses", "colors": ["white"]},
+           "d": {"id": "d", "name": "4 Kırmızı ve 5 Beyaz Gül", "name_en": "4 Red and 5 White Roses", "colors": ["red", "white"]}}
+    monkeypatch.setattr(core, "find_flowers", lambda **kw: [{"id": i} for i in cat])
+    monkeypatch.setattr(core, "product", lambda i: cat.get(i))
+    monkeypatch.setattr(core, "live_prices", lambda ps, show=False: {p["id"]: {"price": 1300, "in_stock": True} for p in ps})
+    kind, body = fast.answer(CUST, "how much is 5 red roses")
+    assert "5-Piece Red Rose Bouquet - 1,300 TL" in body  # "15", "5 White" and "4 ... and 5 ..." are not "5 red"
+    assert fast.answer(CUST, "how much is 10 red roses") is None  # no hit has that number: the model decides
+    kind, body = fast.answer(CUST, "do you deliver to Kyrenia?")
+    assert "Girne (Kyrenia)" in body and "500 TL" in body and "1,000 TL" in body
+    assert "Evet" in fast.answer(CUST, "Girne teslimat var mı")[1]

@@ -1,0 +1,834 @@
+{
+ "flowers_and_bears": [
+  [
+   "C",
+   "iyi aksamlar"
+  ],
+  [
+   "C",
+   "çiçek ve ayıcık bakıyorum, 5 çiçek ve 4 ayıcık seçeneği gösterir misin"
+  ],
+  [
+   "C",
+   "3. çiçek ve son 2 ayıcık olsun"
+  ],
+  [
+   "C",
+   "bir de çikolata seçeneklerine bakalım"
+  ],
+  [
+   "C",
+   "sonuncusu"
+  ],
+  [
+   "C",
+   "tamamdır bu kadar"
+  ]
+ ],
+ "arabic": [
+  [
+   "A",
+   "/turkish"
+  ],
+  [
+   "C",
+   "ني"
+  ],
+  [
+   "C",
+   "بدي ورد احمر"
+  ],
+  [
+   "C",
+   "خليني اخذ اول وحده و ثالث وحده"
+  ],
+  [
+   "C",
+   "صح"
+  ],
+  [
+   "C",
+   "المرسل سارة 0533 444 5566، المستلمة ليلى 0533 777 8899، كيرينيا شارع كوردون رقم 5 قرب المارينا، اكتبوا على الكرت: كل عام وانتِ بخير"
+  ],
+  [
+   "C",
+   "بكرا توصيل عادي"
+  ],
+  [
+   "C",
+   "نعم"
+  ],
+  [
+   "A",
+   "onayla"
+  ]
+ ],
+ "sloppy_english": [
+  [
+   "C",
+   "hey"
+  ],
+  [
+   "C",
+   "need smth for my gf bday, flowers n maybe a bear"
+  ],
+  [
+   "C",
+   "the second one lol"
+  ],
+  [
+   "C",
+   "and the last bear u showed, 2 of em"
+  ],
+  [
+   "C",
+   "card says happy bday babe"
+  ],
+  [
+   "C",
+   "pls dont ring the bell, call her instead"
+  ],
+  [
+   "C",
+   "im sam 05339876543, shes lina 05331234567, girne kordon street 5 near the marina"
+  ],
+  [
+   "C",
+   "jet tmrw anytime after 6"
+  ],
+  [
+   "C",
+   "yep"
+  ],
+  [
+   "A",
+   "confirm"
+  ],
+  [
+   "C",
+   "can i pay by card"
+  ],
+  [
+   "C",
+   "ok fine iban then"
+  ]
+ ],
+ "french": [
+  [
+   "C",
+   "bonjour"
+  ],
+  [
+   "C",
+   "je veux des roses rouges"
+  ],
+  [
+   "C",
+   "le dernier"
+  ],
+  [
+   "C",
+   "oui c'est tout"
+  ],
+  [
+   "C",
+   "c'est pour moi, je viendrai le chercher demain vers 15h, je m'appelle Claire 05337654321"
+  ],
+  [
+   "C",
+   "oui"
+  ]
+ ],
+ "russian_short": [
+  [
+   "A",
+   "/russian"
+  ],
+  [
+   "C",
+   "привет"
+  ],
+  [
+   "C",
+   "хочу розы и мишку"
+  ],
+  [
+   "C",
+   "второй и последний"
+  ],
+  [
+   "C",
+   "на открытке напишите: с днём рождения, любимая"
+  ],
+  [
+   "C",
+   "отправитель Иван 05331112244, получатель Анна 05335556677, Кирения, улица Кордон 5 возле марины"
+  ],
+  [
+   "C",
+   "джет завтра после 6"
+  ],
+  [
+   "C",
+   "да"
+  ],
+  [
+   "A",
+   "подтверждаю"
+  ],
+  [
+   "C",
+   "а можно поменять на послезавтра?"
+  ],
+  [
+   "C",
+   "да, то же время"
+  ]
+ ],
+ "en_full_change_after_payment": [
+  [
+   "A",
+   "/english"
+  ],
+  [
+   "C",
+   "Hi, I'd like to send flowers to my mom"
+  ],
+  [
+   "C",
+   "show me some pink ones"
+  ],
+  [
+   "C",
+   "the first one please"
+  ],
+  [
+   "C",
+   "that's all"
+  ],
+  [
+   "C",
+   "I'm Mark 05334441122, my mom is Helen 05337778899, Lefkoşa, Dereboyu street 12, flat 3"
+  ],
+  [
+   "C",
+   "card: Love you mom, Mark"
+  ],
+  [
+   "C",
+   "jet tomorrow at 15:00"
+  ],
+  [
+   "C",
+   "yes, correct"
+  ],
+  [
+   "A",
+   "confirm"
+  ],
+  [
+   "SETSTATUS",
+   "1",
+   "payment_review"
+  ],
+  [
+   "A",
+   "payment is ok"
+  ],
+  [
+   "C",
+   "oh can you also add a chocolate box to the same delivery?"
+  ],
+  [
+   "C",
+   "yes that's all"
+  ],
+  [
+   "C",
+   "yes, correct"
+  ],
+  [
+   "A",
+   "approve"
+  ],
+  [
+   "A",
+   "the payment for it is in, confirm"
+  ],
+  [
+   "C",
+   "thanks! what time will it arrive?"
+  ]
+ ],
+ "tr_full_pickup_cancel": [
+  [
+   "A",
+   "/turkish"
+  ],
+  [
+   "C",
+   "merhaba"
+  ],
+  [
+   "C",
+   "orkide bakıyorum"
+  ],
+  [
+   "C",
+   "ilkini alayım"
+  ],
+  [
+   "C",
+   "bu kadar"
+  ],
+  [
+   "C",
+   "ben gelip alacağım"
+  ],
+  [
+   "C",
+   "adım Selin 05332223344, yarın 14:00 gibi gelirim"
+  ],
+  [
+   "C",
+   "pardon yarın değil öbür gün olsun, saat aynı"
+  ],
+  [
+   "C",
+   "evet"
+  ],
+  [
+   "C",
+   "evet doğru, gönderebilirsin"
+  ],
+  [
+   "A",
+   "onayla"
+  ],
+  [
+   "SETSTATUS",
+   "1",
+   "payment_review"
+  ],
+  [
+   "A",
+   "ödeme tamam"
+  ],
+  [
+   "C",
+   "siparişi iptal etmek istiyorum, planlarım değişti"
+  ],
+  [
+   "A",
+   "iptali onayla"
+  ]
+ ],
+ "ru_full_swap": [
+  [
+   "A",
+   "/russian"
+  ],
+  [
+   "C",
+   "здравствуйте"
+  ],
+  [
+   "C",
+   "нужен букет красных роз"
+  ],
+  [
+   "C",
+   "первый"
+  ],
+  [
+   "C",
+   "нет, лучше второй вместо первого"
+  ],
+  [
+   "C",
+   "да, всё"
+  ],
+  [
+   "C",
+   "я Ольга 05336665544, получатель Дмитрий 05339990011, Гирне, улица Зия Рахми 7"
+  ],
+  [
+   "C",
+   "обычная доставка завтра"
+  ],
+  [
+   "C",
+   "да, всё верно"
+  ],
+  [
+   "A",
+   "подтверждаю"
+  ],
+  [
+   "SETSTATUS",
+   "1",
+   "payment_review"
+  ],
+  [
+   "A",
+   "оплата получена"
+  ]
+ ],
+ "bears_first_tr": [
+  [
+   "C",
+   "merhaba"
+  ],
+  [
+   "C",
+   "önce 4 ayıcık, sonra 5 çiçek seçeneği gösterir misin"
+  ],
+  [
+   "C",
+   "3. çiçek ve son 2 ayıcık olsun"
+  ],
+  [
+   "C",
+   "tamamdır bu kadar"
+  ]
+ ],
+ "bears_first_en": [
+  [
+   "C",
+   "hi"
+  ],
+  [
+   "C",
+   "can you show me 3 teddy bears and then 4 flower bouquets"
+  ],
+  [
+   "C",
+   "the 2nd flower and the first bear please"
+  ],
+  [
+   "C",
+   "that's all"
+  ]
+ ],
+ "tr_full_delivery": [
+  [
+   "A",
+   "/turkish"
+  ],
+  [
+   "C",
+   "merhaba, annem için çiçek göndermek istiyorum"
+  ],
+  [
+   "C",
+   "3 gül buketi ve 2 ayıcık gösterir misin"
+  ],
+  [
+   "C",
+   "2. gül ve ilk ayıcık olsun"
+  ],
+  [
+   "C",
+   "bu kadar"
+  ],
+  [
+   "C",
+   "ben Ahmet 05331234567, annem Fatma Yılmaz 05337654321, Lefkoşa Dereboyu caddesi no 15 daire 4"
+  ],
+  [
+   "C",
+   "karta 'iyi ki varsın anneciğim' yazalım"
+  ],
+  [
+   "C",
+   "yarın jet olsun saat 16:00"
+  ],
+  [
+   "C",
+   "evet doğru"
+  ],
+  [
+   "A",
+   "onayla"
+  ],
+  [
+   "SETSTATUS",
+   "1",
+   "payment_review"
+  ],
+  [
+   "A",
+   "ödeme tamam"
+  ],
+  [
+   "C",
+   "teşekkürler, saat kaçta gelir?"
+  ],
+  [
+   "C",
+   "bir de aynı teslimata çikolata kutusu ekleyebilir misiniz?"
+  ],
+  [
+   "C",
+   "evet bu kadar"
+  ],
+  [
+   "C",
+   "evet doğru"
+  ],
+  [
+   "C",
+   "evet, gönderebilirsin"
+  ],
+  [
+   "A",
+   "onayla"
+  ],
+  [
+   "A",
+   "ödemesi geldi, onayla"
+  ]
+ ],
+ "fr_document_language": [
+  [
+   "C",
+   "bonjour"
+  ],
+  [
+   "C",
+   "je veux des roses rouges"
+  ],
+  [
+   "C",
+   "le dernier"
+  ],
+  [
+   "C",
+   "oui c'est tout"
+  ],
+  [
+   "C",
+   "c'est pour moi, je viendrai le chercher demain vers 15h, je m'appelle Claire 05337654321"
+  ],
+  [
+   "C",
+   "oui"
+  ],
+  [
+   "A",
+   "confirm"
+  ],
+  [
+   "C",
+   "pouvez-vous m'envoyer la facture en français ?"
+  ]
+ ],
+ "addon_tr_generic": [
+  [
+   "A",
+   "/turkish"
+  ],
+  [
+   "C",
+   "merhaba, annem için çiçek göndermek istiyorum"
+  ],
+  [
+   "C",
+   "3 gül buketi ve 2 ayıcık gösterir misin"
+  ],
+  [
+   "C",
+   "2. gül ve ilk ayıcık olsun"
+  ],
+  [
+   "C",
+   "bu kadar"
+  ],
+  [
+   "C",
+   "ben Ahmet 05331234567, annem Fatma Yılmaz 05337654321, Lefkoşa Dereboyu caddesi no 15 daire 4"
+  ],
+  [
+   "C",
+   "karta 'iyi ki varsın anneciğim' yazalım"
+  ],
+  [
+   "C",
+   "yarın jet olsun saat 16:00"
+  ],
+  [
+   "C",
+   "evet doğru"
+  ],
+  [
+   "A",
+   "onayla"
+  ],
+  [
+   "SETSTATUS",
+   "1",
+   "payment_review"
+  ],
+  [
+   "A",
+   "ödeme tamam"
+  ],
+  [
+   "C",
+   "bir de çikolata ekleyebilir misiniz?"
+  ],
+  [
+   "C",
+   "ikincisi olsun"
+  ],
+  [
+   "C",
+   "evet aynı teslimata"
+  ],
+  [
+   "C",
+   "evet doğru"
+  ],
+  [
+   "C",
+   "evet, gönderebilirsin"
+  ],
+  [
+   "A",
+   "onayla"
+  ],
+  [
+   "A",
+   "ödemesi geldi, onayla"
+  ]
+ ],
+ "addon_tr_named": [
+  [
+   "A",
+   "/turkish"
+  ],
+  [
+   "C",
+   "merhaba, annem için çiçek göndermek istiyorum"
+  ],
+  [
+   "C",
+   "3 gül buketi ve 2 ayıcık gösterir misin"
+  ],
+  [
+   "C",
+   "2. gül ve ilk ayıcık olsun"
+  ],
+  [
+   "C",
+   "bu kadar"
+  ],
+  [
+   "C",
+   "ben Ahmet 05331234567, annem Fatma Yılmaz 05337654321, Lefkoşa Dereboyu caddesi no 15 daire 4"
+  ],
+  [
+   "C",
+   "karta 'iyi ki varsın anneciğim' yazalım"
+  ],
+  [
+   "C",
+   "yarın jet olsun saat 16:00"
+  ],
+  [
+   "C",
+   "evet doğru"
+  ],
+  [
+   "A",
+   "onayla"
+  ],
+  [
+   "SETSTATUS",
+   "1",
+   "payment_review"
+  ],
+  [
+   "A",
+   "ödeme tamam"
+  ],
+  [
+   "C",
+   "çikolata kutusu da ekleyin"
+  ],
+  [
+   "C",
+   "evet"
+  ],
+  [
+   "C",
+   "evet doğru"
+  ],
+  [
+   "C",
+   "evet, gönderebilirsin"
+  ],
+  [
+   "A",
+   "onayla"
+  ],
+  [
+   "A",
+   "ödemesi geldi, onayla"
+  ]
+ ],
+ "addon_en_generic": [
+  [
+   "A",
+   "/english"
+  ],
+  [
+   "C",
+   "Hi, I'd like to send flowers to my mom"
+  ],
+  [
+   "C",
+   "show me some pink ones"
+  ],
+  [
+   "C",
+   "the first one please"
+  ],
+  [
+   "C",
+   "that's all"
+  ],
+  [
+   "C",
+   "I'm Mark 05334441122, my mom is Helen 05337778899, Lefkoşa, Dereboyu street 12, flat 3"
+  ],
+  [
+   "C",
+   "card: Love you mom, Mark"
+  ],
+  [
+   "C",
+   "jet tomorrow at 15:00"
+  ],
+  [
+   "C",
+   "yes, correct"
+  ],
+  [
+   "A",
+   "confirm"
+  ],
+  [
+   "SETSTATUS",
+   "1",
+   "payment_review"
+  ],
+  [
+   "A",
+   "payment is ok"
+  ],
+  [
+   "C",
+   "can I add some chocolates too?"
+  ],
+  [
+   "C",
+   "the second one"
+  ],
+  [
+   "C",
+   "yes, same delivery"
+  ],
+  [
+   "C",
+   "yes correct"
+  ],
+  [
+   "C",
+   "yes, send it"
+  ],
+  [
+   "A",
+   "approve"
+  ],
+  [
+   "A",
+   "the payment for it is in, confirm"
+  ]
+ ],
+ "addon_en_named": [
+  [
+   "A",
+   "/english"
+  ],
+  [
+   "C",
+   "Hi, I'd like to send flowers to my mom"
+  ],
+  [
+   "C",
+   "show me some pink ones"
+  ],
+  [
+   "C",
+   "the first one please"
+  ],
+  [
+   "C",
+   "that's all"
+  ],
+  [
+   "C",
+   "I'm Mark 05334441122, my mom is Helen 05337778899, Lefkoşa, Dereboyu street 12, flat 3"
+  ],
+  [
+   "C",
+   "card: Love you mom, Mark"
+  ],
+  [
+   "C",
+   "jet tomorrow at 15:00"
+  ],
+  [
+   "C",
+   "yes, correct"
+  ],
+  [
+   "A",
+   "confirm"
+  ],
+  [
+   "SETSTATUS",
+   "1",
+   "payment_review"
+  ],
+  [
+   "A",
+   "payment is ok"
+  ],
+  [
+   "C",
+   "add a chocolate box please"
+  ],
+  [
+   "C",
+   "yes"
+  ],
+  [
+   "C",
+   "yes correct"
+  ],
+  [
+   "C",
+   "yes, send it"
+  ],
+  [
+   "A",
+   "approve"
+  ],
+  [
+   "A",
+   "the payment for it is in, confirm"
+  ]
+ ]
+}

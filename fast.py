@@ -10,7 +10,7 @@ TR_RE = re.compile(r"\b(merhaba|selam\w*|teşekkür\w*|tesekkur\w*|günaydın|ne
 PUNCT = r"[ !.,?🌸💐🙏❤️😊]*"
 THANKS = re.compile(r"^((ok(ay)?|great|perfect|cool|tamam|süper|harika|tamamdır)[ ,.!]+)?(thanks?( you)?( so much| a lot)?|thank u|thx|ty|teşekkür(ler| ederim)?|tesekkur(ler)?( ederim)?|çok teşekkürler|sağ ol|sag ol|eyvallah|tşk)" + PUNCT + "$", re.I)
 GREET = re.compile(r"^(hi+|hello+|hey+|hiya|good (morning|afternoon|evening)|merhaba|selam(lar)?|günaydın|gunaydin|iyi (akşamlar|günler|aksamlar|gunler)|mrb|slm)" + PUNCT + "$", re.I)
-HOURS = re.compile(r"\b(opening|closing|working|business) hours?\b|\bwhat time\b.*\b(open|close)|\bare you open\b|\bwhen (do|are) you (open|close)|çalışma saat|açılış|kapanış|saat kaçta|kaçta (açıl|kapan)|açık mı|kaça kadar|kacta (acil|kapan)|calisma saat", re.I)
+HOURS = re.compile(r"\b(opening|closing|working|business) hours?\b|\bwhat time\b.*\b(open|close)|\bare you open\b|\bwhen (do|are) you (open|close)|çalışma saat|açılış|kapanış|saat kaçta (?:açı|kapan)|kaçta (açıl|kapan)|açık mı|kaça kadar|kacta (acil|kapan)|calisma saat", re.I)
 MINE = re.compile(r"\b(same|this|that|these|my|mine|his|her|their|our|new|another|other|different|deliver\w*|send it|send her|send him|here|there|aynı|bu|şu|benim|onun|teslim\w*|buraya|oraya|yeni)\b|\[shared location\]", re.I)  # "same location", "my address", "deliver to this location": the CUSTOMER's place, not a question about the shop
 WHERE = re.compile(r"\bwhere (are|is)\b.*\b(you|shop|store)\b|\b(your )?(address|location|directions)\b|\bgoogle maps?\b|\b(send|share).*\bmap\b|\bwhere.*located\b|nerede|neredesiniz|adres|konum|harita|yol tarif", re.I)
 PHONE = re.compile(r"\b(your|shop'?s?) (phone|number|contact|email|e-mail)\b|\b(the )?(shop|store|company|flower ?shop)('?s)? (phone|number)\b|\bcontact (info|details)\b|\bhow (can|do) i (call|contact|reach)\b|telefon numara|iletişim|sizi nasıl ara|numaranız", re.I)
@@ -18,10 +18,10 @@ OTHER = re.compile(r"\b(my|mine|me|want|need|tomorrow|today|tonight|use|yarın|y
 SHOW = re.compile(r"\b(photo|picture|pic|image|show|see|fotoğraf\w*|resim\w*|göster\w*)\b", re.I)
 ASK = re.compile(r"\b(price|cost|how much|do you have|have you got|fiyat\w*|kaç|var mı|nedir|ne kadar)\b", re.I)
 
-GREETS = [("Hi, lovely to meet you! I'm Leyla 🌸 Fresh flowers, same-day delivery and free shipping across North Cyprus. What's the occasion, or who are the flowers for? 💐",
-           "Merhaba, tanıştığımıza çok sevindim! Ben Leyla 🌸 Taze çiçekler, aynı gün teslimat ve Kuzey Kıbrıs'ın her yerine ücretsiz gönderim. Hangi vesileyle, çiçekler kimin için? 💐"),
-          ("Hello and welcome! 🌸 Leyla here: fresh flowers, same-day delivery, free shipping all over North Cyprus. Who are we making smile today? 💐",
-           "Merhaba, hoş geldiniz! 🌸 Ben Leyla: taze çiçekler, aynı gün teslimat, tüm Kuzey Kıbrıs'a ücretsiz gönderim. Bugün kimi mutlu ediyoruz? 💐")]
+GREETS = [("Hi, lovely to meet you! I'm Leyla 🌸 Fresh flowers and same-day delivery across North Cyprus. What's the occasion, or who are the flowers for? 💐",
+           "Merhaba, tanıştığımıza çok sevindim! Ben Leyla 🌸 Taze çiçekler ve Kuzey Kıbrıs'ın her yerine aynı gün teslimat. Hangi vesileyle, çiçekler kimin için? 💐"),
+          ("Hello and welcome! 🌸 Leyla here: fresh flowers and same-day delivery all over North Cyprus. Who are we making smile today? 💐",
+           "Merhaba, hoş geldiniz! 🌸 Ben Leyla: taze çiçekler ve tüm Kuzey Kıbrıs'a aynı gün teslimat. Bugün kimi mutlu ediyoruz? 💐")]
 AGAIN = [("Hi again 🌸 How can I help with your flowers?", "Tekrar merhaba 🌸 Çiçeklerinizle ilgili nasıl yardımcı olabilirim?")]
 WELCOME = [("You're very welcome! 🌸 I'm here whenever you need flowers.", "Rica ederim! 🌸 Çiçek lazım olduğunda buradayım."),
            ("My pleasure 💐 Just message me anytime!", "Ne demek, benim için zevkti 💐 İstediğiniz zaman yazın!")]
@@ -76,16 +76,44 @@ def _product(phone, text):
     return best[1:] if best else None
 
 
+LANG_OF = None  # set by agent.py: (phone, text) -> 0 en / 1 tr / 2 ru, the language of the CHAT (a line that shows no language keeps the chat's)
+
+
+FORM_FIELDS = re.compile(r"(?im)^\s*(?:(?:your|sender|recipient)(?:'s)? (?:name|phone)|city(?: / town)?|delivery address|address|card message(?: \(optional\))?|gönderen (?:adı|telefonu)|alıcı (?:adı|telefonu)|şehir(?: / ilçe)?|adres|kart notu(?: \(isteğe bağlı\))?)\s*:")
+
+
+PRICE_WORDS = re.compile(r"\b(price|cost|how much|fiyat\w*|ne kadar|kaç|kac)\b", re.I)
+DELIVER_Q = re.compile(r"\b(deliver\w*|delivery|teslimat\w*|g[oö]nder\w*)\b", re.I)
+
+
+def _counted_match(text):
+    """'5 red roses': the ONE catalog hit whose name carries that same number as a whole number ('5-Piece', not '15'); None when there is no number or not exactly one such hit."""
+    m = re.search(r"(?<![\d.,])(\d{1,3})(?![\d.,])", text)
+    plan = plan_search(text)
+    if not m or not plan or not plan["query"] or plan.get("max_price") or plan.get("min_price") or plan.get("sort"):
+        return None
+    n = m.group(1)
+    hits = [core.product(h["id"]) for h in core.find_flowers(**plan)]
+    hits = [h for h in hits if h and h.get("available") is not False]
+    want = set(plan["query"].lower().split()) & {c for h in hits for c in h.get("colors") or []}  # "red": the hit must have that colour
+    ok = [h for h in hits if want <= set(h.get("colors") or []) and len(re.findall(r"\d+", h.get("name") or "")) == 1  # a name with one number ("4 ... and 5 ...") is not "5"
+          and any(re.search(rf"(?<![\d.,]){n}(?![\d.,])", x or "") for x in (h.get("name"), h.get("name_en")))]
+    return ok[0] if len(ok) == 1 else None
+
+
 def answer(phone, text):
     """-> ("text", str) | ("photo", product, caption, short line) | None (give it to the model)."""
     text = text.strip()
+    if FORM_FIELDS.search(text):
+        return None
+    lg = LANG_OF(phone, text) if LANG_OF else (2 if CYR.search(text) else _tr(text))
     if text and len(text) <= 100 and "\n" not in text and TODAY_DELIVER.search(text) and not text.startswith("["):  # "can you deliver today / right now?": a direct answer from the shop's clock, no model
         mine = [r for r in core.orders() if r["customer_number"] == phone and r["status"] not in ("rejected", "cancelled")]
         key = core.detect_area(text) or ((core.detect_area(mine[-1]["address"]) or mine[-1]["delivery_area"]) if mine else None)
-        return ("text", core.today_answer(2 if CYR.search(text) else 1 if _tr(text) else 0, key or None, mine[-1] if mine else None))
-    if not text or len(text) > 100 or "\n" in text or text.startswith("[") or CYR.search(text):  # Russian is answered by the model, in Russian (the canned replies are English / Turkish)
+        return ("text", core.today_answer(lg, key or None, mine[-1] if mine else None))
+    if not text or len(text) > 100 or "\n" in text or text.startswith("[") or CYR.search(text) or lg == 2:  # Russian is answered by the model, in Russian (the canned replies are English / Turkish)
         return None
-    tr = _tr(text)
+    tr = 1 if re.match(r"\s*(merhaba|selam|g[uü]nayd[ıi]n|iyi (ak[sş]amlar|g[uü]nler))", text, re.I) else lg  # a Turkish greeting is answered in Turkish even without Turkish letters
     busy = any(r["customer_number"] == phone and r["status"] in core.OPEN + core.LOCKED for r in core.orders())
     if THANKS.match(text) and not busy:
         return ("text", random.choice(WELCOME)[tr])
@@ -102,7 +130,7 @@ def answer(phone, text):
         found = _product(phone, text)
         if found:
             p, nm = found
-            tr = _tr(re.sub(re.escape(nm), " ", text, flags=re.I))  # the product's own name must not decide the language
+            tr = min(LANG_OF(phone, re.sub(re.escape(nm), " ", text, flags=re.I)), 1) if LANG_OF else _tr(re.sub(re.escape(nm), " ", text, flags=re.I))  # the product's own name must not decide the language; a text that shows none keeps the chat's
             e = core.live_prices([p], show=True).get(p["id"])
             if e and e.get("in_stock") is not False:
                 name = core.display(p, "tr" if tr else "en")
@@ -110,6 +138,26 @@ def answer(phone, text):
                 if SHOW.search(text):
                     return ("photo", p, cap, "Buyurun 🌸 Beğendiniz mi, sipariş verelim mi?" if tr else "Here it is 🌸 Shall I put it together for you?")
                 return ("text", cap + ("\n\nSipariş verelim mi? 🌸" if tr else "\n\nShall I put it together for you? 🌸"))
+    if not busy and PRICE_WORDS.search(text) and not any(rx.search(text) for _, rx in CURRENCY_WORDS):  # "how much is 5 red roses": ONE product whose name has that exact number is answered by code; anything less clear goes to the model
+        p = _counted_match(text)
+        e = core.live_prices([p], show=True).get(p["id"]) if p else None
+        if e and e.get("price") is not None and e.get("in_stock") is not False:
+            return ("text", f"{core.display(p, 'tr' if tr else 'en')} - {core.fmt_tl(e['price'])}\n{p.get('url') or ''}".strip() + ("\n\nSipariş verelim mi? 🌸" if tr else "\n\nShall I put it together for you? 🌸"))
+    if not busy and DELIVER_Q.search(text) and not NOT_SIMPLE.search(text):  # "do you deliver to Kyrenia?": the area's rules, straight from delivery.json
+        key = core.detect_area(text)
+        a = core._json("delivery.json")["areas"].get(key) if key else None
+        if a:
+            label = a["label"].get("tr" if tr else "en") or a["label"]["en"]
+            jet = core.fmt_tl(a["jet_fee"]) if a["jet_fee"] is not None else None
+            if tr:
+                return ("text", f"Evet, {label} bölgesine teslimat yapıyoruz 🌸 Normal teslimat ücretsiz ve {a['departure']}'de çıkıyor" + (f"; belirli saatte (jet) teslimat +{jet}" if jet else "; jet ücretini ekibimiz teyit eder") + f". Minimum sipariş {core.fmt_tl(a['minimum'])} (sadece ürünler).")
+            return ("text", f"Yes, we deliver to {label} 🌸 Normal delivery is free and leaves at {a['departure']}" + (f"; jet delivery to a specific time is +{jet}" if jet else "; the team confirms the jet fee") + f". Minimum order is {core.fmt_tl(a['minimum'])} in products.")
+    if not busy and not SHOW.search(text) and search_hint(phone, text) and not any(rx.search(text) for _, rx in CURRENCY_WORDS):
+        plan = plan_search(text)
+        hits = core.find_flowers(**plan) if plan else []
+        options = [core.product(p["id"]) for p in hits if core.product(p["id"])]
+        if options:
+            return ("options", options)
     return None
 
 
@@ -154,8 +202,7 @@ ORDER_INTENT = re.compile(r"\b(take|order|buy|want|add|i'd like|i would like|ist
 
 
 def _num(x):
-    x = x.strip(".,")
-    return float(x.replace(".", "").replace(",", ".")) if x.count(".") > 1 or ("," in x) else float(x)
+    return float(core.parse_amount(x.strip(".,")))  # "1.500" and "1,500" are fifteen hundred; "2,5" is two and a half
 
 
 DETAILS_CUT = re.compile(r"\s(?:for\s+[A-ZÇĞİÖŞÜ][\w'’]+|\+?\d[\d ]{7,}|(?:tomorrow|today|tonight|yarın|bugün|deliver\w*|my name|name is|address)\b).*$", re.S)
@@ -231,20 +278,20 @@ def split_head(phone, text):
     """A long message ("Hi... I would like to order roses. What are your hours?"): the greeting and the simple shop questions are answered AT ONCE by code (no model);
     what is left goes to the agent. Returns (replies, the part answered, the rest)."""
     t = text.strip()
-    if len(t) > 600 or t.startswith("[") or CYR.search(t):
+    if FORM_FIELDS.search(t) or len(t) > 600 or t.startswith("[") or CYR.search(t) or (LANG_OF and LANG_OF(phone, t) == 2):  # Russian chats are answered by the model, in Russian
         return [], "", t
     busy = any(r["customer_number"] == phone and r["status"] in core.OPEN + core.LOCKED for r in core.orders())
     replies, answered = [], []
     m = GREET_LEAD.match(t)
     if m and not busy and len(t) > m.end() and not core.history(phone):  # a first greeting only; later ones are left to the agent
-        replies.append(SHORT_GREETS[_tr(t)])
+        replies.append(SHORT_GREETS[1 if re.match(r"\s*(merhaba|selam|g[uü]nayd[ıi]n|iyi )", m.group(1), re.I) else min(LANG_OF(phone, t), 1) if LANG_OF else _tr(t)])  # a Turkish greeting is answered in Turkish even without Turkish letters ("iyi aksamlar")
         answered.append(t[:m.end()].strip())
         t = t[m.end():]
     b, kept = core.business_info(), []
     for ch in re.split(r"(?<=[.!?…])\s+|\n+", t):
         c = ch.strip()
         if c and len(c) <= 100 and not OTHER.search(c):
-            parts = [f(b, _tr(c)) for rx, f in ((HOURS, _hours), (WHERE, _where), (PHONE, _phone)) if rx.search(c) and not (rx is WHERE and MINE.search(c))]
+            parts = [f(b, min(LANG_OF(phone, c), 1) if LANG_OF else _tr(c)) for rx, f in ((HOURS, _hours), (WHERE, _where), (PHONE, _phone)) if rx.search(c) and not (rx is WHERE and MINE.search(c))]
             if parts and all(parts):
                 replies.append("\n\n".join(parts))
                 answered.append(c)
@@ -269,3 +316,38 @@ def requested_delivery_time(text):
         if hour <= core.now().hour:
             hour += 12
     return f"{hour:02d}:{minute:02d}"
+
+
+MONTH_NAMES = {"january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6, "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
+               "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7, "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
+               "ocak": 1, "subat": 2, "mart": 3, "nisan": 4, "mayis": 5, "haziran": 6, "temmuz": 7, "agustos": 8, "eylul": 9, "ekim": 10, "kasim": 11, "aralik": 12,
+               "января": 1, "февраля": 2, "марта": 3, "апреля": 4, "мая": 5, "июня": 6, "июля": 7, "августа": 8, "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12}
+
+
+def far_date(text, today=None, days=None):
+    """The date the customer names with a day and a month ("25 December", "December 25th", "25.12") when it lies further ahead than the shop takes orders (MAX_DAYS_AHEAD, 2 by default); None otherwise."""
+    from datetime import date, timedelta
+    today = today or core.now().date()
+    mx = int(core.cfg("MAX_DAYS_AHEAD", "2")) if days is None else days
+    t = core.fold(text or "")
+    cands = []
+    for d, mon in re.findall(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?([^\W\d_]{3,9})\b", t):
+        cands.append((int(d), MONTH_NAMES.get(mon)))
+    for mon, d in re.findall(r"\b([^\W\d_]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?\b", t):
+        cands.append((int(d), MONTH_NAMES.get(mon)))
+    for d, m in re.findall(r"\b(\d{1,2})[./](\d{1,2})\b(?![./]\d)", t):
+        if 1 <= int(m) <= 12:
+            cands.append((int(d), int(m)))
+    for d, m in cands:
+        if not m or not 1 <= d <= 31:
+            continue
+        for y in (today.year, today.year + 1):
+            try:
+                dt = date(y, m, d)
+            except ValueError:
+                continue
+            if dt >= today:
+                if dt > today + timedelta(days=mx):
+                    return dt
+                break
+    return None
